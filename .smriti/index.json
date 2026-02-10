@@ -1,0 +1,182 @@
+[
+  {
+    "id": "c84adc84",
+    "category": "uncategorized",
+    "file": "knowledge/uncategorized/2026-02-10_claude-code.md",
+    "shared_at": "2026-02-10T10:46:25.742Z"
+  },
+  {
+    "id": "96102237",
+    "category": "uncategorized",
+    "file": "knowledge/uncategorized/2026-02-10_claude-code.md",
+    "shared_at": "2026-02-10T10:46:25.742Z"
+  },
+  {
+    "id": "ec2a9411",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_claude-code.md",
+    "shared_at": "2026-02-10T10:46:25.744Z"
+  },
+  {
+    "id": "a9a45641-1bf9-41da-9aa4-1f61815d71ab",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_command-messageinitcommand-message-command-nameini.md",
+    "shared_at": "2026-02-10T10:46:25.744Z"
+  },
+  {
+    "id": "9028693f-3fb1-47b9-8a2b-a5d6771d5059",
+    "category": "bug",
+    "file": "knowledge/bug/2026-02-10_request-interrupted-by-user-for-tool-use.md",
+    "shared_at": "2026-02-10T10:46:25.745Z"
+  },
+  {
+    "id": "fd956621-8cae-423b-8b42-3c397d5a9434",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_remove-env-file-and-force-push-to-github.md",
+    "shared_at": "2026-02-10T10:46:25.746Z"
+  },
+  {
+    "id": "2e5f420a-e376-4ad4-8b35-ad94838cbc42",
+    "category": "project",
+    "file": "knowledge/project/2026-02-10_clear.md",
+    "shared_at": "2026-02-10T10:46:25.747Z"
+  },
+  {
+    "id": "598764f9-ce18-4f90-b951-210e7f6afd1c",
+    "category": "project",
+    "file": "knowledge/project/2026-02-10_can-i-use-my-local-ollama-model-with-claude-cli.md",
+    "shared_at": "2026-02-10T10:46:25.747Z"
+  },
+  {
+    "id": "ec2a9411-039d-4cae-83e0-99913c290bbc",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_request-interrupted-by-user-for-tool-use.md",
+    "shared_at": "2026-02-10T10:46:25.748Z"
+  },
+  {
+    "id": "bc0a47ce-db71-4cf0-87bc-ea467c9f6ce0",
+    "category": "topic",
+    "file": "knowledge/topic/2026-02-10_lets-discuss-about-the-local-memory-system-a-rag-b.md",
+    "shared_at": "2026-02-10T10:46:25.748Z"
+  },
+  {
+    "id": "7d2fb4ba-5b2e-4e34-9d40-951aaaa7a1de",
+    "category": "project",
+    "file": "knowledge/project/2026-02-10_what-i-will-need-to-get-from-wrangler-to-create-th.md",
+    "shared_at": "2026-02-10T10:46:25.749Z"
+  },
+  {
+    "id": "7a03996f-d04d-46b7-a30e-b69ea3770a5e",
+    "category": "bug",
+    "file": "knowledge/bug/2026-02-10_can-you-complete-remaining-tasks.md",
+    "shared_at": "2026-02-10T10:46:25.749Z"
+  },
+  {
+    "id": "ae8fe6b5-a166-475f-b5ce-5416801abc57",
+    "category": "uncategorized",
+    "file": "knowledge/uncategorized/2026-02-10_clear.md",
+    "shared_at": "2026-02-10T10:46:25.749Z"
+  },
+  {
+    "id": "94d5d582-f9d5-481f-bc59-42291c79f8a8",
+    "category": "project",
+    "file": "knowledge/project/2026-02-10_implement-the-following-plan-openfga-integration-p.md",
+    "shared_at": "2026-02-10T10:46:25.750Z"
+  },
+  {
+    "id": "0a03e5ef-f35c-481b-9dac-b6eee7422ff2",
+    "category": "feature",
+    "file": "knowledge/feature/2026-02-10_let-create-a-proper-readme-file-contributing-instr.md",
+    "shared_at": "2026-02-10T10:46:25.750Z"
+  },
+  {
+    "id": "2ecff2c6-8821-4d3f-8f87-66d4bd29a4e1",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_implement-the-following-plan-resource-creation-per.md",
+    "shared_at": "2026-02-10T10:46:25.753Z"
+  },
+  {
+    "id": "e479ed40-79cb-4b2a-a959-3e3f85ae7047",
+    "category": "project",
+    "file": "knowledge/project/2026-02-10_can-you-create-this-folder-as-bun-project-i-want-t.md",
+    "shared_at": "2026-02-10T10:46:25.753Z"
+  },
+  {
+    "id": "40b3e2ee-e169-40cb-8085-a8f04cb303d3",
+    "category": "feature",
+    "file": "knowledge/feature/2026-02-10_can-you-create-this-folder-as-bun-project-i-want-t.md",
+    "shared_at": "2026-02-10T10:46:25.754Z"
+  },
+  {
+    "id": "44fff7a5-fafb-4939-b032-de20721d57bc",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_implement-the-following-plan-org-admin-management.md",
+    "shared_at": "2026-02-10T10:46:25.755Z"
+  },
+  {
+    "id": "e96025a3-0459-4eae-964c-74dd8c004e1c",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_implement-the-following-plan-demo-script-sharma-au.md",
+    "shared_at": "2026-02-10T10:46:25.756Z"
+  },
+  {
+    "id": "04321d7f-1ce4-41c6-823c-344026795afa",
+    "category": "project",
+    "file": "knowledge/project/2026-02-10_can-i-configure-you-to-use-local-ollama-models.md",
+    "shared_at": "2026-02-10T10:46:25.756Z"
+  },
+  {
+    "id": "84aa0a49-6d65-455d-87d9-b53023cf06cd",
+    "category": "feature",
+    "file": "knowledge/feature/2026-02-10_request-interrupted-by-user-for-tool-use.md",
+    "shared_at": "2026-02-10T10:46:25.757Z"
+  },
+  {
+    "id": "3c9485f4-67bf-41e0-8eb4-6a4413e8b7dd",
+    "category": "uncategorized",
+    "file": "knowledge/uncategorized/2026-02-10_clear.md",
+    "shared_at": "2026-02-10T10:46:25.757Z"
+  },
+  {
+    "id": "cc920155-7aba-40e5-897d-53a9ae566c7f",
+    "category": "code",
+    "file": "knowledge/code/2026-02-10_i-want-you-to-help-me-implement-a-memory-layer-for.md",
+    "shared_at": "2026-02-10T10:46:25.757Z"
+  },
+  {
+    "id": "2e5f420a",
+    "category": "project",
+    "file": "knowledge/project/2026-02-10_claude-code.md",
+    "shared_at": "2026-02-10T10:46:25.758Z"
+  },
+  {
+    "id": "598764f9",
+    "category": "uncategorized",
+    "file": "knowledge/uncategorized/2026-02-10_claude-code.md",
+    "shared_at": "2026-02-10T10:46:25.758Z"
+  },
+  {
+    "id": "3c9485f4",
+    "category": "uncategorized",
+    "file": "knowledge/uncategorized/2026-02-10_claude-code.md",
+    "shared_at": "2026-02-10T10:46:25.758Z"
+  },
+  {
+    "id": "84aa0a49",
+    "category": "feature",
+    "file": "knowledge/feature/2026-02-09_claude-code.md",
+    "shared_at": "2026-02-10T10:46:25.759Z"
+  },
+  {
+    "id": "7c130ccd",
+    "category": "architecture",
+    "file": "knowledge/architecture/2026-02-09_gpu-for-llms.md",
+    "shared_at": "2026-02-10T10:46:25.759Z"
+  },
+  {
+    "id": "f1543e51",
+    "category": "project",
+    "file": "knowledge/project/2026-02-09_ollama-config.md",
+    "shared_at": "2026-02-10T10:46:25.759Z"
+  }
+]
