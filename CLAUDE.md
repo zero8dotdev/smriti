@@ -42,13 +42,19 @@ src/
 │   └── classifier.ts     # Auto-categorization (rule-based + LLM)
 └── team/
     ├── share.ts          # Export knowledge to .smriti/ directory
-    └── sync.ts           # Import team knowledge from .smriti/
+    ├── sync.ts           # Import team knowledge from .smriti/
+    ├── formatter.ts      # Sanitization + doc formatting pipeline
+    ├── reflect.ts        # LLM-powered session reflection via Ollama
+    └── prompts/
+        └── share-reflect.md  # Customizable reflection prompt template
 test/
 ├── ingest.test.ts        # Parser + project detection tests
 ├── search.test.ts        # Search + recall tests
 ├── db.test.ts            # Schema + metadata tests
 ├── categorize.test.ts    # Categorization tests
-└── team.test.ts          # Share + sync tests
+├── team.test.ts          # Share + sync tests
+├── formatter.test.ts     # Formatter + sanitization tests
+└── reflect.test.ts       # Reflection parsing tests
 ```
 
 ## Architecture
@@ -87,7 +93,12 @@ Claude Code stores sessions in `~/.claude/projects/<dir-name>/`. The dir name en
 
 ### Team Sharing
 
-- `smriti share`: Exports sessions as markdown with YAML frontmatter to `.smriti/knowledge/`
+- `smriti share`: Exports sessions as clean documentation to `.smriti/knowledge/`
+  - Sanitizes XML noise, interrupt markers, API errors, narration filler
+  - Filters noise-only sessions, merges consecutive same-role messages
+  - Generates LLM reflections via Ollama by default (use `--no-reflect` to skip)
+  - Generates `.smriti/CLAUDE.md` so Claude Code auto-discovers shared knowledge
+  - Customizable reflection prompt at `.smriti/prompts/share-reflect.md`
 - `smriti sync`: Imports markdown files from `.smriti/knowledge/` back into local DB
 - Deduplication via content hashing — same content won't import twice
 

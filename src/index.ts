@@ -105,7 +105,7 @@ Recall options:
 Share options:
   --session <id>               Share specific session
   --output <dir>               Custom output directory
-  --reflect                    Generate LLM reflections via Ollama
+  --no-reflect                 Skip LLM reflections (on by default)
   --reflect-model <name>       Ollama model for reflections
 
 Examples:
@@ -312,7 +312,7 @@ async function main() {
           project: getArg(args, "--project"),
           sessionId: getArg(args, "--session"),
           outputDir: getArg(args, "--output"),
-          reflect: hasFlag(args, "--reflect"),
+          reflect: !hasFlag(args, "--no-reflect"),
           reflectModel: getArg(args, "--reflect-model"),
         });
 

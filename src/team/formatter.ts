@@ -1,9 +1,9 @@
 /**
- * team/formatter.ts - Documentation formatter for .smriti/ knowledge export
+ * team/formatter.ts - Sanitization and fallback formatting for knowledge export
  *
- * Transforms raw chat transcripts into clean, readable documentation
- * by stripping noise (XML tags, interrupt markers, API errors, narration)
- * and formatting as structured markdown.
+ * Strips noise from raw chat transcripts (XML tags, interrupt markers, API
+ * errors, narration). Provides a fallback conversation-based format when
+ * LLM synthesis is unavailable.
  */
 
 // =============================================================================
@@ -160,57 +160,14 @@ export function deriveTitle(
 }
 
 // =============================================================================
-// Reflection type (imported from reflect.ts at runtime, defined here to avoid
-// circular deps)
+// Fallback document formatting (used when LLM synthesis is unavailable)
 // =============================================================================
 
-export type Reflection = {
-  learnings: string;
-  keyTakeaway: string;
-  teamContext: string;
-  changesMade: string;
-  discovery: string;
-};
-
-// =============================================================================
-// Document formatting
-// =============================================================================
-
-/** Format a reflection block as markdown */
-function formatReflectionBlock(reflection: Reflection): string {
-  const sections: string[] = [];
-
-  if (reflection.learnings) {
-    sections.push(`**Learnings:** ${reflection.learnings}`);
-  }
-  if (reflection.keyTakeaway) {
-    sections.push(`**Key Takeaway:** ${reflection.keyTakeaway}`);
-  }
-  if (reflection.teamContext) {
-    sections.push(`**Team Context:** ${reflection.teamContext}`);
-  }
-  if (reflection.changesMade) {
-    sections.push(`**Changes Made:** ${reflection.changesMade}`);
-  }
-  if (reflection.discovery) {
-    sections.push(`**Discovery:** ${reflection.discovery}`);
-  }
-
-  if (sections.length === 0) return "";
-
-  return sections.join("\n\n");
-}
-
-export type FormatOptions = {
-  reflection?: Reflection | null;
-};
-
-/** Format filtered messages as a documentation markdown document */
-export function formatAsDocument(
+/** Format filtered messages as a fallback markdown document */
+export function formatAsFallbackDocument(
   title: string,
   summary: string | null | undefined,
-  messages: CleanMessage[],
-  options: FormatOptions = {}
+  messages: CleanMessage[]
 ): string {
   const lines: string[] = [];
 
@@ -222,20 +179,8 @@ export function formatAsDocument(
     lines.push("");
   }
 
-  // Insert reflection block after summary, before conversation
-  if (options.reflection) {
-    const reflectionBlock = formatReflectionBlock(options.reflection);
-    if (reflectionBlock) {
-      lines.push(reflectionBlock);
-      lines.push("");
-      lines.push("---");
-      lines.push("");
-    }
-  }
-
   for (const msg of messages) {
     if (msg.role === "user") {
-      // User messages become headings
       const msgLines = msg.content.split("\n");
       const heading = msgLines[0].replace(/^#+\s*/, "").trim();
       const body = msgLines.slice(1).join("\n").trim();
@@ -247,7 +192,6 @@ export function formatAsDocument(
         lines.push("");
       }
     } else {
-      // Assistant messages are body text
       lines.push(msg.content);
       lines.push("");
     }
@@ -260,17 +204,16 @@ export function formatAsDocument(
 // Main entry points
 // =============================================================================
 
-/** Full pipeline: filter → merge → derive title → format */
-export function formatSessionAsDocument(
+/** Fallback pipeline: filter → merge → derive title → format as conversation */
+export function formatSessionAsFallback(
   sessionTitle: string | null | undefined,
   summary: string | null | undefined,
-  rawMessages: RawMessage[],
-  options: FormatOptions = {}
+  rawMessages: RawMessage[]
 ): { title: string; body: string } {
   const filtered = filterMessages(rawMessages);
   const merged = mergeConsecutive(filtered);
   const title = deriveTitle(sessionTitle, merged);
-  const body = formatAsDocument(title, summary, merged, options);
+  const body = formatAsFallbackDocument(title, summary, merged);
 
   return { title, body };
 }

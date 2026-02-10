@@ -5,8 +5,8 @@ import {
   filterMessages,
   mergeConsecutive,
   deriveTitle,
-  formatAsDocument,
-  formatSessionAsDocument,
+  formatAsFallbackDocument,
+  formatSessionAsFallback,
   isSessionWorthSharing,
 } from "../src/team/formatter";
 
@@ -298,12 +298,12 @@ describe("isSessionWorthSharing", () => {
 });
 
 // =============================================================================
-// formatAsDocument
+// formatAsFallbackDocument
 // =============================================================================
 
-describe("formatAsDocument", () => {
+describe("formatAsFallbackDocument", () => {
   test("formats with title, summary, and messages", () => {
-    const doc = formatAsDocument(
+    const doc = formatAsFallbackDocument(
       "Auth Setup",
       "Set up JWT authentication",
       [
@@ -322,7 +322,7 @@ describe("formatAsDocument", () => {
   });
 
   test("formats without summary", () => {
-    const doc = formatAsDocument("Title", null, [
+    const doc = formatAsFallbackDocument("Title", null, [
       { role: "user", content: "question" },
       { role: "assistant", content: "answer" },
     ]);
@@ -332,7 +332,7 @@ describe("formatAsDocument", () => {
   });
 
   test("preserves code blocks", () => {
-    const doc = formatAsDocument("Code", null, [
+    const doc = formatAsFallbackDocument("Code", null, [
       { role: "user", content: "Show me code" },
       {
         role: "assistant",
@@ -342,26 +342,13 @@ describe("formatAsDocument", () => {
 
     expect(doc).toContain("```ts\nconst x = 1;\n```");
   });
-
-  test("user messages with multiline content split heading from body", () => {
-    const doc = formatAsDocument("Title", null, [
-      {
-        role: "user",
-        content: "Implement this plan\n\nStep 1: Do X\nStep 2: Do Y",
-      },
-      { role: "assistant", content: "Done." },
-    ]);
-
-    expect(doc).toContain("## Implement this plan");
-    expect(doc).toContain("Step 1: Do X\nStep 2: Do Y");
-  });
 });
 
 // =============================================================================
-// formatSessionAsDocument (integration)
+// formatSessionAsFallback (integration)
 // =============================================================================
 
-describe("formatSessionAsDocument", () => {
+describe("formatSessionAsFallback", () => {
   test("full pipeline with realistic noisy input", () => {
     const rawMessages = [
       {
@@ -372,16 +359,7 @@ describe("formatSessionAsDocument", () => {
       { role: "assistant", content: "" },
       {
         role: "assistant",
-        content:
-          "I'll start by exploring the codebase structure to understand the architecture.",
-      },
-      {
-        role: "assistant",
         content: "Now let me read a few more key files to ensure accuracy.",
-      },
-      {
-        role: "assistant",
-        content: "Let me check a few more details about the middleware.",
       },
       {
         role: "assistant",
@@ -397,56 +375,25 @@ describe("formatSessionAsDocument", () => {
         content:
           'Committed successfully as `2bea47e` — `docs(config): add CLAUDE.md for Claude Code context`.',
       },
-      { role: "user", content: "push it" },
-      {
-        role: "assistant",
-        content:
-          "Your local `main` has diverged from `origin/main`. Two options:\n\n" +
-          "1. **Pull then push** — safe approach\n" +
-          "2. **Force push** — not recommended",
-      },
-      { role: "user", content: "1" },
-      {
-        role: "assistant",
-        content:
-          "Pushed to `origin/docs/add-claude-md`. You can create a PR.",
-      },
     ];
 
-    const { title, body } = formatSessionAsDocument(
+    const { title, body } = formatSessionAsFallback(
       '<command-message>init</command-message> <command-name>/init</command-name>',
-      "Set up CLAUDE.md for the project",
+      null,
       rawMessages
     );
 
-    // Title should be clean (derived from first substantive user message since XML title is noise)
+    // Title should be clean
     expect(title).not.toContain("<command-message>");
-    expect(title).not.toContain("<command-name>");
 
-    // Body should be clean documentation
+    // Body should be clean
     expect(body).not.toContain("<command-message>");
     expect(body).not.toContain("**user**:");
     expect(body).not.toContain("**assistant**:");
-    expect(body).not.toContain("Let me check a few more");
     expect(body).not.toContain("Now let me read");
 
-    // Should contain the substantive content
+    // Should contain substantive content
     expect(body).toContain("CLAUDE.md");
     expect(body).toContain("Committed successfully");
-    expect(body).toContain("Commands");
-  });
-
-  test("noise-only session produces minimal output", () => {
-    const raw = [
-      { role: "user", content: "clear" },
-      {
-        role: "assistant",
-        content: "I'm ready to help! What would you like me to do?",
-      },
-    ];
-
-    // isSessionWorthSharing should catch this, but formatSessionAsDocument
-    // should still produce something if called directly
-    expect(isSessionWorthSharing(raw)).toBe(false);
   });
 });

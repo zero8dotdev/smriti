@@ -1,9 +1,9 @@
 /**
- * team/reflect.ts - LLM-powered session reflection for knowledge export
+ * team/reflect.ts - LLM-powered session synthesis for knowledge export
  *
- * Sends filtered conversation to Ollama with a reflective prompt template,
- * extracts structured insights (learnings, takeaways, team context, changes,
- * discoveries) and returns them for embedding in the documentation.
+ * Sends filtered conversation to Ollama with a synthesis prompt template.
+ * Returns a structured knowledge article (summary, changes, decisions,
+ * insights, context) that replaces the conversation trail in the output.
  *
  * Prompt template is loaded from:
  *   1. .smriti/prompts/share-reflect.md (project override)
@@ -13,18 +13,18 @@
 import { OLLAMA_HOST, OLLAMA_MODEL } from "../config";
 import { join, dirname } from "path";
 import type { RawMessage } from "./formatter";
-import { filterMessages, mergeConsecutive } from "./formatter";
+import { filterMessages, mergeConsecutive, sanitizeContent } from "./formatter";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export type Reflection = {
-  learnings: string;
-  keyTakeaway: string;
-  teamContext: string;
-  changesMade: string;
-  discovery: string;
+export type Synthesis = {
+  summary: string;
+  changes: string;
+  decisions: string;
+  insights: string;
+  context: string;
 };
 
 // =============================================================================
@@ -63,36 +63,46 @@ export async function loadPromptTemplate(
 // Conversation formatting (for prompt injection)
 // =============================================================================
 
+/** Max chars to send to the LLM — keeps prompt within model context window */
+const MAX_CONVERSATION_CHARS = 8000;
+
 /** Format raw messages into a readable conversation string for the LLM */
 function formatConversationForPrompt(rawMessages: RawMessage[]): string {
   const filtered = filterMessages(rawMessages);
   const merged = mergeConsecutive(filtered);
 
-  return merged
+  let text = merged
     .map((m) => `**${m.role}**: ${m.content}`)
     .join("\n\n");
+
+  // Truncate to fit model context, keeping the end (most recent/relevant)
+  if (text.length > MAX_CONVERSATION_CHARS) {
+    text = "...\n\n" + text.slice(-MAX_CONVERSATION_CHARS);
+  }
+
+  return text;
 }
 
 // =============================================================================
 // Response parsing
 // =============================================================================
 
-const SECTION_KEYS: Array<{ header: string; field: keyof Reflection }> = [
-  { header: "### Learnings", field: "learnings" },
-  { header: "### Key Takeaway", field: "keyTakeaway" },
-  { header: "### Team Context", field: "teamContext" },
-  { header: "### Changes Made", field: "changesMade" },
-  { header: "### Discovery", field: "discovery" },
+const SECTION_KEYS: Array<{ header: string; field: keyof Synthesis }> = [
+  { header: "### Summary", field: "summary" },
+  { header: "### Changes", field: "changes" },
+  { header: "### Decisions", field: "decisions" },
+  { header: "### Insights", field: "insights" },
+  { header: "### Context", field: "context" },
 ];
 
-/** Parse structured reflection from LLM response text */
-export function parseReflection(response: string): Reflection {
-  const reflection: Reflection = {
-    learnings: "",
-    keyTakeaway: "",
-    teamContext: "",
-    changesMade: "",
-    discovery: "",
+/** Parse structured synthesis from LLM response text */
+export function parseSynthesis(response: string): Synthesis {
+  const synthesis: Synthesis = {
+    summary: "",
+    changes: "",
+    decisions: "",
+    insights: "",
+    context: "",
   };
 
   for (let i = 0; i < SECTION_KEYS.length; i++) {
@@ -119,33 +129,94 @@ export function parseReflection(response: string): Reflection {
       value = "";
     }
 
-    reflection[field] = value;
+    synthesis[field] = value;
   }
 
-  return reflection;
+  return synthesis;
+}
+
+/** Derive a title from the synthesis summary */
+export function deriveTitleFromSynthesis(synthesis: Synthesis): string | null {
+  if (!synthesis.summary) return null;
+  // Use first sentence of summary, capped at 80 chars
+  const firstSentence = synthesis.summary.split(/\.\s/)[0];
+  if (firstSentence.length > 80) {
+    return firstSentence.slice(0, 77) + "...";
+  }
+  return firstSentence.replace(/\.$/, "");
 }
 
 // =============================================================================
-// Main reflection
+// Document formatting
 // =============================================================================
 
-export type ReflectOptions = {
+/** Format a synthesis into a complete markdown document body */
+export function formatSynthesisAsDocument(
+  title: string,
+  synthesis: Synthesis
+): string {
+  const lines: string[] = [];
+
+  lines.push(`# ${title}`);
+  lines.push("");
+
+  if (synthesis.summary) {
+    lines.push(`> ${synthesis.summary}`);
+    lines.push("");
+  }
+
+  if (synthesis.changes) {
+    lines.push("## Changes");
+    lines.push("");
+    lines.push(synthesis.changes);
+    lines.push("");
+  }
+
+  if (synthesis.decisions) {
+    lines.push("## Decisions");
+    lines.push("");
+    lines.push(synthesis.decisions);
+    lines.push("");
+  }
+
+  if (synthesis.insights) {
+    lines.push("## Insights");
+    lines.push("");
+    lines.push(synthesis.insights);
+    lines.push("");
+  }
+
+  if (synthesis.context) {
+    lines.push("## Context");
+    lines.push("");
+    lines.push(synthesis.context);
+    lines.push("");
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
+
+// =============================================================================
+// Main synthesis
+// =============================================================================
+
+export type SynthesizeOptions = {
   model?: string;
   projectSmritiDir?: string;
   timeout?: number;
 };
 
 /**
- * Reflect on a session by calling Ollama with the prompt template.
+ * Synthesize a session into a knowledge article via Ollama.
  * Returns null if Ollama is unavailable or the session is too short.
  */
-export async function reflectOnSession(
+export async function synthesizeSession(
   rawMessages: RawMessage[],
-  options: ReflectOptions = {}
-): Promise<Reflection | null> {
+  options: SynthesizeOptions = {}
+): Promise<Synthesis | null> {
   const conversation = formatConversationForPrompt(rawMessages);
 
-  // Skip reflection for very short conversations
+  // Skip synthesis for very short conversations
   if (conversation.length < 100) return null;
 
   try {
@@ -153,7 +224,7 @@ export async function reflectOnSession(
     const prompt = template.replace("{{conversation}}", conversation);
 
     const model = options.model || OLLAMA_MODEL;
-    const timeout = options.timeout || 30_000;
+    const timeout = options.timeout || 120_000;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
@@ -167,7 +238,7 @@ export async function reflectOnSession(
         stream: false,
         options: {
           temperature: 0.3,
-          num_predict: 500,
+          num_predict: 1000,
         },
       }),
       signal: controller.signal,
@@ -180,14 +251,17 @@ export async function reflectOnSession(
     const data = (await response.json()) as { response?: string };
     if (!data.response) return null;
 
-    return parseReflection(data.response);
+    return parseSynthesis(data.response);
   } catch {
     // Ollama unavailable or timeout — graceful degradation
     return null;
   }
 }
 
-/** Check if a reflection has any substantive content */
-export function hasSubstantiveReflection(reflection: Reflection): boolean {
-  return Object.values(reflection).some((v) => v.length > 0);
+/** Check if a synthesis has enough content to use */
+export function hasSubstantiveSynthesis(synthesis: Synthesis): boolean {
+  // Need at least summary + one other section
+  if (!synthesis.summary) return false;
+  const otherSections = [synthesis.changes, synthesis.decisions, synthesis.insights, synthesis.context];
+  return otherSections.some((s) => s.length > 0);
 }

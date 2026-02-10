@@ -1,25 +1,8 @@
-You are analyzing a development session between a user and an AI coding assistant. Your job is to extract structured knowledge from this conversation.
+You are a technical writer synthesizing a development session into a concise knowledge document.
 
-Read the conversation below and answer each question in 1-2 concise sentences. If a question doesn't apply, write "N/A".
+Read the conversation below between a developer and an AI coding assistant. Produce a structured knowledge article — NOT a conversation summary, but distilled insights that would be useful for anyone working on this project.
 
-## Questions
-
-### Learnings
-What did the developer learn from this session? What new knowledge was gained?
-
-### Key Takeaway
-What is the one thing worth remembering from this session?
-
-### Team Context
-What would be helpful for other team members to know? Any context, decisions, or patterns discovered?
-
-### Changes Made
-What concrete change was made to the codebase? (files, features, fixes, configs)
-
-### Discovery
-What did the developer discover about the project, its architecture, or its dependencies?
-
----
+Write in third person. Be specific: mention file paths, function names, config values, and commands. Skip pleasantries and meta-commentary.
 
 ## Conversation
 
@@ -27,19 +10,19 @@ What did the developer discover about the project, its architecture, or its depe
 
 ---
 
-Respond in this exact format (keep the section headers):
+Respond in this exact markdown format. Every section is required — write "N/A" if a section truly doesn't apply.
 
-### Learnings
-[your answer]
+### Summary
+One paragraph: what was accomplished in this session and why it matters.
 
-### Key Takeaway
-[your answer]
+### Changes
+Bullet list of concrete changes (files created/modified, features added, bugs fixed, configs changed). Include file paths.
 
-### Team Context
-[your answer]
+### Decisions
+Key technical decisions made and their rationale. What alternatives were considered?
 
-### Changes Made
-[your answer]
+### Insights
+What was learned or discovered about the project, its architecture, dependencies, or patterns? What would save a teammate time?
 
-### Discovery
-[your answer]
+### Context
+Background context needed to understand these changes. Prior state, constraints, or gotchas encountered.

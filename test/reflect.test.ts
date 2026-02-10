@@ -1,147 +1,233 @@
 import { test, expect, describe } from "bun:test";
 import {
-  parseReflection,
+  parseSynthesis,
   loadPromptTemplate,
-  hasSubstantiveReflection,
+  hasSubstantiveSynthesis,
+  deriveTitleFromSynthesis,
+  formatSynthesisAsDocument,
 } from "../src/team/reflect";
-import type { Reflection } from "../src/team/reflect";
+import type { Synthesis } from "../src/team/reflect";
 
 // =============================================================================
-// parseReflection
+// parseSynthesis
 // =============================================================================
 
-describe("parseReflection", () => {
+describe("parseSynthesis", () => {
   test("parses well-formed LLM response", () => {
-    const response = `### Learnings
-The developer learned how to set up JWT authentication with Bun.
+    const response = `### Summary
+Set up JWT authentication for the API. Created middleware, login, register, and refresh endpoints with RS256 signing.
 
-### Key Takeaway
-JWT middleware should validate tokens on every protected route, not just at login.
+### Changes
+- Created \`src/auth/middleware.ts\` — validates Bearer tokens on protected routes
+- Created \`src/auth/login.ts\` — authenticates credentials and issues tokens
+- Created \`src/auth/register.ts\` — creates new user accounts
+- Created \`src/auth/refresh.ts\` — rotates expired tokens
 
-### Team Context
-The auth system uses RS256 signing with keys stored in environment variables.
+### Decisions
+Chose RS256 over HS256 for JWT signing because it allows public key verification without sharing the secret. Keys stored in environment variables.
 
-### Changes Made
-Created src/auth/middleware.ts, login.ts, register.ts, and refresh.ts.
+### Insights
+Bun's built-in crypto module supports JWT signing natively without external packages like \`jsonwebtoken\`. This eliminates a dependency.
 
-### Discovery
-Bun's built-in crypto module supports JWT signing natively without external packages.`;
+### Context
+The API previously had no authentication. All endpoints were public. This was blocking the frontend team from implementing user-specific features.`;
 
-    const result = parseReflection(response);
+    const result = parseSynthesis(response);
 
-    expect(result.learnings).toContain("JWT authentication");
-    expect(result.keyTakeaway).toContain("validate tokens");
-    expect(result.teamContext).toContain("RS256");
-    expect(result.changesMade).toContain("middleware.ts");
-    expect(result.discovery).toContain("crypto module");
+    expect(result.summary).toContain("JWT authentication");
+    expect(result.changes).toContain("middleware.ts");
+    expect(result.decisions).toContain("RS256");
+    expect(result.insights).toContain("crypto module");
+    expect(result.context).toContain("no authentication");
   });
 
   test("handles missing sections gracefully", () => {
-    const response = `### Learnings
-Learned about SQLite FTS5 indexing.
+    const response = `### Summary
+Updated the search module with FTS5 indexing.
 
-### Key Takeaway
+### Changes
+- Modified \`src/search/index.ts\`
+
+### Decisions
 N/A
 
-### Changes Made
-Updated the search module.`;
+### Insights
+N/A
 
-    const result = parseReflection(response);
+### Context
+Search was previously doing full table scans.`;
 
-    expect(result.learnings).toContain("FTS5");
-    expect(result.keyTakeaway).toBe(""); // N/A stripped
-    expect(result.teamContext).toBe(""); // missing section
-    expect(result.changesMade).toContain("search module");
-    expect(result.discovery).toBe(""); // missing section
+    const result = parseSynthesis(response);
+
+    expect(result.summary).toContain("FTS5");
+    expect(result.changes).toContain("search/index.ts");
+    expect(result.decisions).toBe("");
+    expect(result.insights).toBe("");
+    expect(result.context).toContain("full table scans");
   });
 
   test("handles completely empty response", () => {
-    const result = parseReflection("");
+    const result = parseSynthesis("");
 
-    expect(result.learnings).toBe("");
-    expect(result.keyTakeaway).toBe("");
-    expect(result.teamContext).toBe("");
-    expect(result.changesMade).toBe("");
-    expect(result.discovery).toBe("");
+    expect(result.summary).toBe("");
+    expect(result.changes).toBe("");
+    expect(result.decisions).toBe("");
+    expect(result.insights).toBe("");
+    expect(result.context).toBe("");
   });
 
-  test("handles response with extra text before sections", () => {
-    const response = `Here is my analysis of the session:
+  test("handles response with preamble text before sections", () => {
+    const response = `Here is my analysis:
 
-### Learnings
-The team set up a new Bun project.
+### Summary
+Initialized the Smriti project as a Bun-based memory layer.
 
-### Key Takeaway
-Using Bun.serve() with HTML imports eliminates the need for Vite.
+### Changes
+- Created \`package.json\` with Bun config
+- Created \`src/\` directory structure
 
-### Team Context
+### Decisions
+Named the project "Smriti" (Sanskrit for memory) based on user preference.
+
+### Insights
 N/A
 
-### Changes Made
-Initialized smriti/ directory with package.json and source structure.
-
-### Discovery
+### Context
 N/A`;
 
-    const result = parseReflection(response);
-    expect(result.learnings).toContain("Bun project");
-    expect(result.keyTakeaway).toContain("HTML imports");
-    expect(result.teamContext).toBe("");
-    expect(result.changesMade).toContain("smriti/");
-    expect(result.discovery).toBe("");
-  });
-
-  test("strips N/A variations", () => {
-    const response = `### Learnings
-N/A
-
-### Key Takeaway
-n/a
-
-### Team Context
-N/A.
-
-### Changes Made
-na
-
-### Discovery
-Something real here.`;
-
-    const result = parseReflection(response);
-    expect(result.learnings).toBe("");
-    expect(result.keyTakeaway).toBe("");
-    expect(result.teamContext).toBe("");
-    // "na" matches the N/A pattern (/ is optional)
-    expect(result.changesMade).toBe("");
-    expect(result.discovery).toContain("Something real");
+    const result = parseSynthesis(response);
+    expect(result.summary).toContain("Smriti");
+    expect(result.changes).toContain("package.json");
+    expect(result.decisions).toContain("Sanskrit");
   });
 });
 
 // =============================================================================
-// hasSubstantiveReflection
+// hasSubstantiveSynthesis
 // =============================================================================
 
-describe("hasSubstantiveReflection", () => {
+describe("hasSubstantiveSynthesis", () => {
   test("returns false when all fields empty", () => {
-    const reflection: Reflection = {
-      learnings: "",
-      keyTakeaway: "",
-      teamContext: "",
-      changesMade: "",
-      discovery: "",
+    const synthesis: Synthesis = {
+      summary: "",
+      changes: "",
+      decisions: "",
+      insights: "",
+      context: "",
     };
-    expect(hasSubstantiveReflection(reflection)).toBe(false);
+    expect(hasSubstantiveSynthesis(synthesis)).toBe(false);
   });
 
-  test("returns true when at least one field has content", () => {
-    const reflection: Reflection = {
-      learnings: "",
-      keyTakeaway: "Use Bun for everything.",
-      teamContext: "",
-      changesMade: "",
-      discovery: "",
+  test("returns false when only summary present", () => {
+    const synthesis: Synthesis = {
+      summary: "Did some work.",
+      changes: "",
+      decisions: "",
+      insights: "",
+      context: "",
     };
-    expect(hasSubstantiveReflection(reflection)).toBe(true);
+    expect(hasSubstantiveSynthesis(synthesis)).toBe(false);
+  });
+
+  test("returns true when summary + at least one other section", () => {
+    const synthesis: Synthesis = {
+      summary: "Set up authentication.",
+      changes: "- Created middleware.ts",
+      decisions: "",
+      insights: "",
+      context: "",
+    };
+    expect(hasSubstantiveSynthesis(synthesis)).toBe(true);
+  });
+});
+
+// =============================================================================
+// deriveTitleFromSynthesis
+// =============================================================================
+
+describe("deriveTitleFromSynthesis", () => {
+  test("derives title from first sentence of summary", () => {
+    const synthesis: Synthesis = {
+      summary: "Set up JWT authentication for the API. Created four new files.",
+      changes: "",
+      decisions: "",
+      insights: "",
+      context: "",
+    };
+    expect(deriveTitleFromSynthesis(synthesis)).toBe(
+      "Set up JWT authentication for the API"
+    );
+  });
+
+  test("truncates long titles", () => {
+    const synthesis: Synthesis = {
+      summary: "A".repeat(100) + ". More text.",
+      changes: "",
+      decisions: "",
+      insights: "",
+      context: "",
+    };
+    const title = deriveTitleFromSynthesis(synthesis);
+    expect(title!.length).toBeLessThanOrEqual(80);
+    expect(title!.endsWith("...")).toBe(true);
+  });
+
+  test("returns null when no summary", () => {
+    const synthesis: Synthesis = {
+      summary: "",
+      changes: "",
+      decisions: "",
+      insights: "",
+      context: "",
+    };
+    expect(deriveTitleFromSynthesis(synthesis)).toBeNull();
+  });
+});
+
+// =============================================================================
+// formatSynthesisAsDocument
+// =============================================================================
+
+describe("formatSynthesisAsDocument", () => {
+  test("formats complete synthesis as knowledge article", () => {
+    const synthesis: Synthesis = {
+      summary: "Set up authentication with JWT tokens.",
+      changes: "- Created `src/auth/middleware.ts`\n- Created `src/auth/login.ts`",
+      decisions: "Chose RS256 over HS256 for asymmetric verification.",
+      insights: "Bun natively supports JWT signing via its crypto module.",
+      context: "API had no authentication previously.",
+    };
+
+    const doc = formatSynthesisAsDocument("JWT Authentication Setup", synthesis);
+
+    expect(doc).toContain("# JWT Authentication Setup");
+    expect(doc).toContain("> Set up authentication with JWT tokens.");
+    expect(doc).toContain("## Changes");
+    expect(doc).toContain("src/auth/middleware.ts");
+    expect(doc).toContain("## Decisions");
+    expect(doc).toContain("RS256");
+    expect(doc).toContain("## Insights");
+    expect(doc).toContain("crypto module");
+    expect(doc).toContain("## Context");
+    expect(doc).toContain("no authentication");
+  });
+
+  test("omits empty sections", () => {
+    const synthesis: Synthesis = {
+      summary: "Quick fix for a typo.",
+      changes: "- Fixed typo in `README.md`",
+      decisions: "",
+      insights: "",
+      context: "",
+    };
+
+    const doc = formatSynthesisAsDocument("Typo Fix", synthesis);
+
+    expect(doc).toContain("# Typo Fix");
+    expect(doc).toContain("## Changes");
+    expect(doc).not.toContain("## Decisions");
+    expect(doc).not.toContain("## Insights");
+    expect(doc).not.toContain("## Context");
   });
 });
 
@@ -154,71 +240,17 @@ describe("loadPromptTemplate", () => {
     const template = await loadPromptTemplate();
 
     expect(template).toContain("{{conversation}}");
-    expect(template).toContain("### Learnings");
-    expect(template).toContain("### Key Takeaway");
-    expect(template).toContain("### Team Context");
-    expect(template).toContain("### Changes Made");
-    expect(template).toContain("### Discovery");
+    expect(template).toContain("### Summary");
+    expect(template).toContain("### Changes");
+    expect(template).toContain("### Decisions");
+    expect(template).toContain("### Insights");
+    expect(template).toContain("### Context");
   });
 
   test("falls back to default when project dir doesn't have override", async () => {
     const template = await loadPromptTemplate("/nonexistent/path/.smriti");
 
     expect(template).toContain("{{conversation}}");
-    expect(template).toContain("### Learnings");
-  });
-});
-
-// =============================================================================
-// Integration with formatter
-// =============================================================================
-
-describe("reflection in formatted output", () => {
-  test("formatAsDocument includes reflection block", async () => {
-    // Import formatter here to test integration
-    const { formatAsDocument } = await import("../src/team/formatter");
-
-    const reflection: Reflection = {
-      learnings: "Learned about JWT auth patterns.",
-      keyTakeaway: "Always validate tokens server-side.",
-      teamContext: "Auth uses RS256 with env-stored keys.",
-      changesMade: "Created auth middleware and routes.",
-      discovery: "Bun supports native JWT signing.",
-    };
-
-    const doc = formatAsDocument(
-      "Auth Setup",
-      "Setting up authentication",
-      [
-        { role: "user", content: "Add JWT auth" },
-        { role: "assistant", content: "Created the auth system." },
-      ],
-      { reflection }
-    );
-
-    expect(doc).toContain("# Auth Setup");
-    expect(doc).toContain("**Learnings:** Learned about JWT auth patterns.");
-    expect(doc).toContain("**Key Takeaway:** Always validate tokens");
-    expect(doc).toContain("**Team Context:** Auth uses RS256");
-    expect(doc).toContain("**Changes Made:** Created auth middleware");
-    expect(doc).toContain("**Discovery:** Bun supports native JWT");
-    expect(doc).toContain("---");
-    // Reflection should appear before the conversation content
-    const reflectionIdx = doc.indexOf("**Learnings:**");
-    const conversationIdx = doc.indexOf("## Add JWT auth");
-    expect(reflectionIdx).toBeLessThan(conversationIdx);
-  });
-
-  test("formatAsDocument works without reflection", async () => {
-    const { formatAsDocument } = await import("../src/team/formatter");
-
-    const doc = formatAsDocument("Title", null, [
-      { role: "user", content: "question" },
-      { role: "assistant", content: "answer" },
-    ]);
-
-    expect(doc).not.toContain("**Learnings:**");
-    expect(doc).not.toContain("---");
-    expect(doc).toContain("# Title");
+    expect(template).toContain("### Summary");
   });
 });
