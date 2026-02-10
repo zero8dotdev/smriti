@@ -332,6 +332,26 @@ Smriti is local-first by design. No cloud, no telemetry, no accounts.
 - Synthesis via local [Ollama](https://ollama.ai) (optional)
 - Team sharing happens through git — you control what gets committed
 
+## FAQ
+
+**When does knowledge get captured?**
+Automatically. Smriti hooks into your AI coding tool (Claude Code, Cursor, etc.) and captures every session without any manual step. You just code normally and `smriti ingest` pulls in the conversations.
+
+**Who has access to my data?**
+Only you. Everything lives in a local SQLite database (`~/.cache/qmd/index.sqlite`). There's no cloud, no accounts, no telemetry. Team sharing is explicit — you run `smriti share` to export, commit the `.smriti/` folder to git, and teammates run `smriti sync` to import.
+
+**Can AI agents query the knowledge base?**
+Yes. `smriti recall "query"` returns relevant past context that agents can use. When you run `smriti share`, it generates a `.smriti/CLAUDE.md` index so Claude Code automatically discovers shared knowledge. Agents can search, grep, and recall from the full knowledge base.
+
+**How do multiple projects stay separate?**
+Each project gets its own `.smriti/` folder in its repo root. Sessions are tagged with project IDs in the central database. Search works cross-project by default, but you can scope to a single project with `--project <id>`. Knowledge shared via git stays within that project's repo.
+
+**Does this work with Jira or other issue trackers?**
+Not yet — Smriti is git-native today. Issue tracker integrations are on the roadmap. If you have ideas, open a discussion in [GitHub Issues](https://github.com/zero8dotdev/smriti/issues).
+
+**How does this help preserve existing features during changes?**
+The reasoning behind each code change is captured and searchable. When an AI agent starts a new session, it can recall *why* something was built a certain way — reducing the chance of accidentally breaking existing behavior.
+
 ## Uninstall
 
 ```bash
