@@ -179,6 +179,138 @@ smriti team                   # View team contributions
 
 Everything runs locally. Your conversations never leave your machine. The SQLite database, the embeddings, the search indexes — all on disk, all yours.
 
+## Tagging & Categories
+
+Sessions and messages are automatically tagged into a hierarchical category tree. Tags flow through every command — search, recall, list, and share — so you can slice your team's knowledge by topic.
+
+### Default Category Tree
+
+Smriti ships with 7 top-level categories and 21 subcategories:
+
+| Category | Subcategories |
+|----------|---------------|
+| `code` | `code/implementation`, `code/pattern`, `code/review`, `code/snippet` |
+| `architecture` | `architecture/design`, `architecture/decision`, `architecture/tradeoff` |
+| `bug` | `bug/report`, `bug/fix`, `bug/investigation` |
+| `feature` | `feature/requirement`, `feature/design`, `feature/implementation` |
+| `project` | `project/setup`, `project/config`, `project/dependency` |
+| `decision` | `decision/technical`, `decision/process`, `decision/tooling` |
+| `topic` | `topic/learning`, `topic/explanation`, `topic/comparison` |
+
+### Auto-Classification
+
+Smriti uses a two-stage pipeline to classify messages:
+
+1. **Rule-based** — 24 keyword patterns with weighted confidence scoring. Each pattern targets a specific subcategory (e.g., words like "crash", "stacktrace", "panic" map to `bug/report`). Confidence is calculated from keyword density and rule weight.
+2. **LLM fallback** — When rule confidence falls below the threshold (default `0.5`, configurable via `SMRITI_CLASSIFY_THRESHOLD`), Ollama classifies the message. Only activated when you pass `--llm`.
+
+The most frequent category across a session's messages becomes the session-level tag.
+
+```bash
+# Auto-categorize all uncategorized sessions (rule-based)
+smriti categorize
+
+# Include LLM fallback for ambiguous sessions
+smriti categorize --llm
+
+# Categorize a specific session
+smriti categorize --session <session-id>
+```
+
+### Manual Tagging
+
+Override or supplement auto-classification with manual tags:
+
+```bash
+smriti tag <session-id> <category>
+
+# Examples
+smriti tag abc123 decision/technical
+smriti tag abc123 bug/fix
+```
+
+Manual tags are stored with confidence `1.0` and source `"manual"`.
+
+### Custom Categories
+
+Add your own categories to extend the default tree:
+
+```bash
+# List the full category tree
+smriti categories
+
+# Add a top-level category
+smriti categories add ops --name "Operations"
+
+# Add a nested category under an existing parent
+smriti categories add ops/incident --name "Incident Response" --parent ops
+
+# Include a description
+smriti categories add ops/runbook --name "Runbooks" --parent ops --description "Operational runbook sessions"
+```
+
+### How Tags Filter Commands
+
+The `--category` flag works across search, recall, list, and share:
+
+| Command | Effect of `--category` |
+|---------|----------------------|
+| `smriti list` | Shows categories column; filters sessions to matching category |
+| `smriti search` | Filters full-text search results to matching category |
+| `smriti recall` | Filters recall context; works with `--synthesize` |
+| `smriti share` | Controls which sessions are exported; files organized into `.smriti/knowledge/` |
+| `smriti status` | Shows session count per category (no filter flag — always shows all) |
+
+**Hierarchical filtering** — Filtering by a parent category automatically includes all its children. `--category decision` matches `decision/technical`, `decision/process`, and `decision/tooling`.
+
+### Categories in Share & Sync
+
+**Categories survive the share/sync roundtrip exactly.** What gets serialized during `smriti share` is exactly what gets deserialized during `smriti sync` — the same category ID goes in, the same category ID comes out. No reclassification, no transformation, no loss. The category a session was tagged with on one machine is the category it will be indexed under on every other machine that syncs it.
+
+When you share sessions, the category is embedded in YAML frontmatter inside each exported markdown file:
+
+```yaml
+---
+id: 2e5f420a-e376-4ad4-8b35-ad94838cbc42
+category: project
+project: smriti
+agent: claude-code
+author: zero8
+shared_at: 2026-02-10T11:29:44.501Z
+tags: ["project", "project/dependency"]
+---
+```
+
+When a teammate runs `smriti sync`, the frontmatter is parsed and the category is restored into their local `smriti_session_tags` table — indexed as `project`, searchable as `project`, filterable as `project`. The serialization and deserialization are symmetric: `share` writes `category: project` → `sync` reads `category: project` → `tagSession(db, sessionId, "project", 1.0, "team")`. No intermediate step reinterprets the value.
+
+Files are organized into subdirectories by primary category (e.g., `.smriti/knowledge/project/`, `.smriti/knowledge/decision/`), but sync reads the category from frontmatter, not the directory path.
+
+> **Note:** Currently only the primary `category` field is restored on sync. Secondary tags in the `tags` array are serialized in the frontmatter but not yet imported. If a session had multiple tags (e.g., `project` + `decision/tooling`), only the primary tag survives the roundtrip.
+
+```bash
+# Share decisions — category metadata travels with the files
+smriti share --project myapp --category decision
+
+# Teammate syncs — categories restored exactly from frontmatter
+smriti sync --project myapp
+```
+
+### Examples
+
+```bash
+# All architectural decisions
+smriti search "database" --category architecture
+
+# Recall only bug-related context
+smriti recall "connection timeout" --category bug --synthesize
+
+# List feature sessions for a specific project
+smriti list --category feature --project myapp
+
+# Share only decision sessions
+smriti share --project myapp --category decision
+```
+
 ## Token Savings
 
 The real value: **your agents get better context with fewer tokens.**
@@ -189,7 +321,7 @@ The real value: **your agents get better context with fewer tokens.**
 | Multi-session recall + synthesis | ~10,000 tokens | ~200 tokens | **50x** |
 | Full project conversation history | 50,000+ tokens | ~500 tokens | **100x** |
 
-Less token spend, faster responses, more room for the actual work in your context window.
+Lower token spend, faster responses, more room for the actual work in your context window.
 
 ## Privacy
 
@@ -206,7 +338,7 @@ Smriti is local-first by design. No cloud, no telemetry, no accounts.
 curl -fsSL https://raw.githubusercontent.com/zero8dotdev/smriti/main/uninstall.sh | bash
 ```
 
-To also remove hook state: `SMRITI_PURGE=1` before the command.
+To also remove hook state, prepend `SMRITI_PURGE=1` to the command.
 
 ## Documentation
 
