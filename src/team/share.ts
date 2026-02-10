@@ -10,6 +10,14 @@ import { SMRITI_DIR, AUTHOR } from "../config";
 import { hashContent } from "../qmd";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
+import {
+  formatSessionAsDocument,
+  isSessionWorthSharing,
+} from "./formatter";
+import {
+  reflectOnSession,
+  hasSubstantiveReflection,
+} from "./reflect";
 
 // =============================================================================
 // Types
@@ -21,6 +29,8 @@ export type ShareOptions = {
   sessionId?: string;
   outputDir?: string;
   author?: string;
+  reflect?: boolean;
+  reflectModel?: string;
 };
 
 export type ShareResult = {
@@ -214,13 +224,44 @@ export async function shareKnowledge(
       const categoryDir = join(knowledgeDir, primaryCategory.replace("/", "-"));
       mkdirSync(categoryDir, { recursive: true });
 
-      // Generate filename
+      // Skip noise-only sessions
+      const rawMessages = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      if (!isSessionWorthSharing(rawMessages)) {
+        result.filesSkipped++;
+        continue;
+      }
+
+      // Reflect on session via Ollama (if enabled)
+      let reflection = null;
+      if (options.reflect) {
+        reflection = await reflectOnSession(rawMessages, {
+          model: options.reflectModel,
+          projectSmritiDir: outputDir,
+        });
+        if (reflection && !hasSubstantiveReflection(reflection)) {
+          reflection = null;
+        }
+      }
+
+      // Format as clean documentation
+      const { title: cleanTitle, body } = formatSessionAsDocument(
+        session.title,
+        session.summary,
+        rawMessages,
+        { reflection }
+      );
+
+      // Generate filename using clean title
       const date = datePrefix(session.created_at);
-      const slug = slugify(session.title || session.id);
+      const slug = slugify(cleanTitle || session.id);
       const filename = `${date}_${slug}.md`;
       const filePath = join(categoryDir, filename);
 
-      // Build markdown content
+      // Build final content with frontmatter
       const meta = frontmatter({
         id: session.id,
         category: primaryCategory,
@@ -231,20 +272,7 @@ export async function shareKnowledge(
         tags: categories.map((c) => c.category_id),
       });
 
-      const conversationLines = messages.map(
-        (m) => `**${m.role}**: ${m.content}`
-      );
-
-      const content = [
-        meta,
-        "",
-        `# ${session.title || "Untitled Session"}`,
-        "",
-        session.summary ? `> ${session.summary}\n` : "",
-        ...conversationLines,
-      ]
-        .filter(Boolean)
-        .join("\n");
+      const content = meta + "\n\n" + body;
 
       await Bun.write(filePath, content);
 

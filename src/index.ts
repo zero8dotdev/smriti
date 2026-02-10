@@ -105,6 +105,8 @@ Recall options:
 Share options:
   --session <id>               Share specific session
   --output <dir>               Custom output directory
+  --reflect                    Generate LLM reflections via Ollama
+  --reflect-model <name>       Ollama model for reflections
 
 Examples:
   smriti ingest claude
@@ -310,6 +312,8 @@ async function main() {
           project: getArg(args, "--project"),
           sessionId: getArg(args, "--session"),
           outputDir: getArg(args, "--output"),
+          reflect: hasFlag(args, "--reflect"),
+          reflectModel: getArg(args, "--reflect-model"),
         });
 
         console.log(formatShareResult(result));
