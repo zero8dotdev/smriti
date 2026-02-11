@@ -37,7 +37,9 @@ export async function recall(
   query: string,
   options: RecallOptions = {}
 ): Promise<RecallResult> {
-  const hasFilters = options.category || options.project || options.agent;
+  const hasFilters = options.category || options.project || options.agent
+    || options.includeThinking || options.includeArtifacts === false
+    || options.includeAttachments === false || options.includeVoiceNotes === false;
 
   if (!hasFilters) {
     // Use QMD's native recall for unfiltered queries
@@ -59,6 +61,10 @@ export async function recall(
     project: options.project,
     agent: options.agent,
     limit: options.limit || DEFAULT_RECALL_LIMIT,
+    includeThinking: options.includeThinking,
+    includeArtifacts: options.includeArtifacts,
+    includeAttachments: options.includeAttachments,
+    includeVoiceNotes: options.includeVoiceNotes,
   });
 
   // Deduplicate by session (keep best score per session)

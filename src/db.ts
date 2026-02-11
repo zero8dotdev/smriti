@@ -178,6 +178,51 @@ export function initializeSmritiTables(db: Database): void {
       created_at TEXT NOT NULL
     );
 
+    -- Artifacts from Claude.ai conversations (code, documents, diagrams)
+    CREATE TABLE IF NOT EXISTS smriti_artifacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      artifact_id TEXT,
+      type TEXT,
+      title TEXT,
+      command TEXT,
+      language TEXT,
+      content TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    -- Thinking blocks (Claude's internal reasoning)
+    CREATE TABLE IF NOT EXISTS smriti_thinking (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      thinking TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    -- File attachments with extracted content
+    CREATE TABLE IF NOT EXISTS smriti_attachments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      file_name TEXT,
+      file_type TEXT,
+      file_size INTEGER,
+      content TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    -- Voice note transcripts
+    CREATE TABLE IF NOT EXISTS smriti_voice_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      title TEXT,
+      transcript TEXT,
+      created_at TEXT NOT NULL
+    );
+
     -- Indexes (original)
     CREATE INDEX IF NOT EXISTS idx_smriti_session_meta_agent
       ON smriti_session_meta(agent_id);
@@ -211,6 +256,18 @@ export function initializeSmritiTables(db: Database): void {
       ON smriti_git_operations(session_id);
     CREATE INDEX IF NOT EXISTS idx_smriti_git_operations_op
       ON smriti_git_operations(operation);
+
+    -- Indexes (claude-web sidecar tables)
+    CREATE INDEX IF NOT EXISTS idx_smriti_artifacts_session
+      ON smriti_artifacts(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_artifacts_type
+      ON smriti_artifacts(type);
+    CREATE INDEX IF NOT EXISTS idx_smriti_thinking_session
+      ON smriti_thinking(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_attachments_session
+      ON smriti_attachments(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_voice_notes_session
+      ON smriti_voice_notes(session_id);
   `);
 }
 
@@ -237,6 +294,18 @@ const DEFAULT_AGENTS = [
     display_name: "Cursor",
     log_pattern: ".cursor/**/*.json",
     parser: "cursor",
+  },
+  {
+    id: "generic",
+    display_name: "Generic Import",
+    log_pattern: null,
+    parser: "generic",
+  },
+  {
+    id: "claude-web",
+    display_name: "Claude.ai",
+    log_pattern: null,
+    parser: "claude-web",
   },
 ] as const;
 
@@ -313,6 +382,87 @@ export function seedDefaults(db: Database): void {
 }
 
 // =============================================================================
+// FTS Migration (sidecar content search)
+// =============================================================================
+
+/**
+ * Migrate memory_fts to v2: adds thinking, artifacts, attachments, voice_notes columns.
+ * Drops old FTS table + triggers, rebuilds index from existing data.
+ * Idempotent — skips if already migrated.
+ */
+export function migrateFTSToV2(db: Database): void {
+  // Check if migration needed by looking for the 'thinking' column
+  const cols = db.prepare("PRAGMA table_info(memory_fts)").all() as { name: string }[];
+  if (cols.some((c) => c.name === "thinking")) return;
+
+  console.log("Migrating memory_fts to include sidecar content...");
+
+  // 1. Drop old triggers
+  db.exec(`DROP TRIGGER IF EXISTS memory_messages_ai`);
+  db.exec(`DROP TRIGGER IF EXISTS memory_messages_ad`);
+
+  // 2. Drop old FTS table
+  db.exec(`DROP TABLE IF EXISTS memory_fts`);
+
+  // 3. Create new FTS table with sidecar columns
+  db.exec(`
+    CREATE VIRTUAL TABLE memory_fts USING fts5(
+      session_title, role, content,
+      thinking, artifacts, attachments, voice_notes,
+      tokenize='porter unicode61'
+    )
+  `);
+
+  // 4. Rebuild index from existing messages + sidecar data
+  db.exec(`
+    INSERT INTO memory_fts(
+      rowid, session_title, role, content,
+      thinking, artifacts, attachments, voice_notes
+    )
+    SELECT
+      mm.id,
+      COALESCE(ms.title, ''),
+      mm.role,
+      mm.content,
+      COALESCE((SELECT GROUP_CONCAT(thinking, ' ') FROM smriti_thinking WHERE message_id = mm.id), ''),
+      COALESCE((SELECT GROUP_CONCAT(content, ' ') FROM smriti_artifacts WHERE message_id = mm.id), ''),
+      COALESCE((SELECT GROUP_CONCAT(content, ' ') FROM smriti_attachments WHERE message_id = mm.id), ''),
+      COALESCE((SELECT GROUP_CONCAT(transcript, ' ') FROM smriti_voice_notes WHERE message_id = mm.id), '')
+    FROM memory_messages mm
+    LEFT JOIN memory_sessions ms ON ms.id = mm.session_id
+  `);
+
+  // 5. Create new triggers with sidecar columns
+  db.exec(`
+    CREATE TRIGGER memory_messages_ai AFTER INSERT ON memory_messages
+    BEGIN
+      INSERT INTO memory_fts(
+        rowid, session_title, role, content,
+        thinking, artifacts, attachments, voice_notes
+      )
+      SELECT
+        new.id,
+        COALESCE((SELECT title FROM memory_sessions WHERE id = new.session_id), ''),
+        new.role,
+        new.content,
+        COALESCE((SELECT GROUP_CONCAT(thinking, ' ') FROM smriti_thinking WHERE message_id = new.id), ''),
+        COALESCE((SELECT GROUP_CONCAT(content, ' ') FROM smriti_artifacts WHERE message_id = new.id), ''),
+        COALESCE((SELECT GROUP_CONCAT(content, ' ') FROM smriti_attachments WHERE message_id = new.id), ''),
+        COALESCE((SELECT GROUP_CONCAT(transcript, ' ') FROM smriti_voice_notes WHERE message_id = new.id), '');
+    END
+  `);
+
+  db.exec(`
+    CREATE TRIGGER memory_messages_ad AFTER DELETE ON memory_messages
+    BEGIN
+      DELETE FROM memory_fts WHERE rowid = old.id;
+    END
+  `);
+
+  console.log("Migration complete.");
+}
+
+// =============================================================================
 // Convenience
 // =============================================================================
 
@@ -322,6 +472,7 @@ export function initSmriti(dbPath?: string): Database {
   initializeMemoryTables(db);
   initializeSmritiTables(db);
   seedDefaults(db);
+  migrateFTSToV2(db);
   return db;
 }
 
@@ -554,4 +705,69 @@ export function insertGitOperation(
     `INSERT INTO smriti_git_operations (message_id, session_id, operation, branch, pr_url, pr_number, details, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(messageId, sessionId, operation, branch, prUrl, prNumber, details, createdAt);
+}
+
+// =============================================================================
+// Claude-Web Sidecar Insert Helpers
+// =============================================================================
+
+export function insertArtifact(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  artifactId: string | null,
+  type: string | null,
+  title: string | null,
+  command: string | null,
+  language: string | null,
+  content: string | null,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_artifacts (message_id, session_id, artifact_id, type, title, command, language, content, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, artifactId, type, title, command, language, content, createdAt);
+}
+
+export function insertThinking(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  thinking: string,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_thinking (message_id, session_id, thinking, created_at)
+     VALUES (?, ?, ?, ?)`
+  ).run(messageId, sessionId, thinking, createdAt);
+}
+
+export function insertAttachment(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  fileName: string | null,
+  fileType: string | null,
+  fileSize: number | null,
+  content: string | null,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_attachments (message_id, session_id, file_name, file_type, file_size, content, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, fileName, fileType, fileSize, content, createdAt);
+}
+
+export function insertVoiceNote(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  title: string | null,
+  transcript: string,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_voice_notes (message_id, session_id, title, transcript, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, title, transcript, createdAt);
 }
