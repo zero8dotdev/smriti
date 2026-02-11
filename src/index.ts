@@ -102,10 +102,18 @@ Filters (apply to search, recall, list, share):
 
 Ingest options:
   smriti ingest claude         Ingest Claude Code sessions
+  smriti ingest claude-web <conversations.json>  Claude.ai data export
+  smriti ingest claude-web-memory <memories.json> Claude.ai memories
   smriti ingest codex          Ingest Codex CLI sessions
   smriti ingest cursor --project-path <path>
   smriti ingest file <path> [--format chat|jsonl] [--title <t>]
   smriti ingest all            Ingest from all known agents
+
+Search content options:
+  --include-thinking           Include thinking blocks in search (opt-in)
+  --no-artifacts               Exclude artifacts from search
+  --no-attachments             Exclude attachments from search
+  --no-voice-notes             Exclude voice notes from search
 
 Recall options:
   --synthesize                 Synthesize results via Ollama
@@ -154,7 +162,7 @@ async function main() {
         const agent = args[1];
         if (!agent) {
           console.error("Usage: smriti ingest <agent>");
-          console.error("Agents: claude, codex, cursor, file, all");
+          console.error("Agents: claude, codex, cursor, claude-web, file, all");
           process.exit(1);
         }
 
@@ -198,6 +206,10 @@ async function main() {
           project: getArg(args, "--project"),
           agent: getArg(args, "--agent"),
           limit: Number(getArg(args, "--limit")) || undefined,
+          includeThinking: hasFlag(args, "--include-thinking"),
+          includeArtifacts: !hasFlag(args, "--no-artifacts"),
+          includeAttachments: !hasFlag(args, "--no-attachments"),
+          includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
         });
 
         if (hasFlag(args, "--json")) {
@@ -226,6 +238,10 @@ async function main() {
           synthesize: hasFlag(args, "--synthesize"),
           model: getArg(args, "--model"),
           maxTokens: Number(getArg(args, "--max-tokens")) || undefined,
+          includeThinking: hasFlag(args, "--include-thinking"),
+          includeArtifacts: !hasFlag(args, "--no-artifacts"),
+          includeAttachments: !hasFlag(args, "--no-attachments"),
+          includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
         });
 
         if (hasFlag(args, "--json")) {
