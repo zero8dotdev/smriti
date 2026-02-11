@@ -106,7 +106,78 @@ export function initializeSmritiTables(db: Database): void {
       content_hash TEXT
     );
 
-    -- Indexes
+    -- Tool usage tracking
+    CREATE TABLE IF NOT EXISTS smriti_tool_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      input_summary TEXT,
+      success INTEGER DEFAULT 1,
+      duration_ms INTEGER,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (message_id) REFERENCES memory_messages(id)
+    );
+
+    -- File operation tracking
+    CREATE TABLE IF NOT EXISTS smriti_file_operations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      project_id TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    -- Command execution tracking
+    CREATE TABLE IF NOT EXISTS smriti_commands (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      command TEXT NOT NULL,
+      exit_code INTEGER,
+      cwd TEXT,
+      is_git INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+
+    -- Error tracking
+    CREATE TABLE IF NOT EXISTS smriti_errors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      error_type TEXT NOT NULL,
+      message TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    -- Token/cost tracking per session
+    CREATE TABLE IF NOT EXISTS smriti_session_costs (
+      session_id TEXT PRIMARY KEY,
+      model TEXT,
+      total_input_tokens INTEGER DEFAULT 0,
+      total_output_tokens INTEGER DEFAULT 0,
+      total_cache_tokens INTEGER DEFAULT 0,
+      estimated_cost_usd REAL DEFAULT 0,
+      turn_count INTEGER DEFAULT 0,
+      total_duration_ms INTEGER DEFAULT 0
+    );
+
+    -- Git operation tracking
+    CREATE TABLE IF NOT EXISTS smriti_git_operations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL,
+      session_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      branch TEXT,
+      pr_url TEXT,
+      pr_number INTEGER,
+      details TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    -- Indexes (original)
     CREATE INDEX IF NOT EXISTS idx_smriti_session_meta_agent
       ON smriti_session_meta(agent_id);
     CREATE INDEX IF NOT EXISTS idx_smriti_session_meta_project
@@ -117,6 +188,28 @@ export function initializeSmritiTables(db: Database): void {
       ON smriti_session_tags(category_id);
     CREATE INDEX IF NOT EXISTS idx_smriti_shares_hash
       ON smriti_shares(content_hash);
+
+    -- Indexes (sidecar tables)
+    CREATE INDEX IF NOT EXISTS idx_smriti_tool_usage_session
+      ON smriti_tool_usage(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_tool_usage_tool_name
+      ON smriti_tool_usage(tool_name);
+    CREATE INDEX IF NOT EXISTS idx_smriti_file_operations_session
+      ON smriti_file_operations(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_file_operations_path
+      ON smriti_file_operations(file_path);
+    CREATE INDEX IF NOT EXISTS idx_smriti_commands_session
+      ON smriti_commands(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_commands_is_git
+      ON smriti_commands(is_git);
+    CREATE INDEX IF NOT EXISTS idx_smriti_errors_session
+      ON smriti_errors(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_errors_type
+      ON smriti_errors(error_type);
+    CREATE INDEX IF NOT EXISTS idx_smriti_git_operations_session
+      ON smriti_git_operations(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_git_operations_op
+      ON smriti_git_operations(operation);
   `);
 }
 
@@ -355,4 +448,108 @@ export function listAgents(db: Database): Array<{
   parser: string;
 }> {
   return db.prepare(`SELECT * FROM smriti_agents ORDER BY id`).all() as any;
+}
+
+// =============================================================================
+// Sidecar Table Insert Helpers
+// =============================================================================
+
+export function insertToolUsage(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  toolName: string,
+  inputSummary: string | null,
+  success: boolean,
+  durationMs: number | null,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_tool_usage (message_id, session_id, tool_name, input_summary, success, duration_ms, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, toolName, inputSummary, success ? 1 : 0, durationMs, createdAt);
+}
+
+export function insertFileOperation(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  operation: string,
+  filePath: string,
+  projectId: string | null,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_file_operations (message_id, session_id, operation, file_path, project_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, operation, filePath, projectId, createdAt);
+}
+
+export function insertCommand(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  command: string,
+  exitCode: number | null,
+  cwd: string | null,
+  isGit: boolean,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_commands (message_id, session_id, command, exit_code, cwd, is_git, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, command, exitCode, cwd, isGit ? 1 : 0, createdAt);
+}
+
+export function insertError(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  errorType: string,
+  message: string,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_errors (message_id, session_id, error_type, message, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, errorType, message, createdAt);
+}
+
+export function upsertSessionCosts(
+  db: Database,
+  sessionId: string,
+  model: string | null,
+  inputTokens: number,
+  outputTokens: number,
+  cacheTokens: number,
+  durationMs: number
+): void {
+  db.prepare(
+    `INSERT INTO smriti_session_costs (session_id, model, total_input_tokens, total_output_tokens, total_cache_tokens, turn_count, total_duration_ms)
+     VALUES (?, ?, ?, ?, ?, 1, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       model = COALESCE(excluded.model, model),
+       total_input_tokens = total_input_tokens + excluded.total_input_tokens,
+       total_output_tokens = total_output_tokens + excluded.total_output_tokens,
+       total_cache_tokens = total_cache_tokens + excluded.total_cache_tokens,
+       turn_count = turn_count + 1,
+       total_duration_ms = total_duration_ms + excluded.total_duration_ms`
+  ).run(sessionId, model, inputTokens, outputTokens, cacheTokens, durationMs);
+}
+
+export function insertGitOperation(
+  db: Database,
+  messageId: number,
+  sessionId: string,
+  operation: string,
+  branch: string | null,
+  prUrl: string | null,
+  prNumber: number | null,
+  details: string | null,
+  createdAt: string
+): void {
+  db.prepare(
+    `INSERT INTO smriti_git_operations (message_id, session_id, operation, branch, pr_url, pr_number, details, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(messageId, sessionId, operation, branch, prUrl, prNumber, details, createdAt);
 }

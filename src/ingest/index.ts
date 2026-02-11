@@ -8,15 +8,10 @@
 import type { Database } from "bun:sqlite";
 
 // =============================================================================
-// Types
+// Types — re-export from types.ts
 // =============================================================================
 
-export type ParsedMessage = {
-  role: string;
-  content: string;
-  timestamp?: string;
-  metadata?: Record<string, unknown>;
-};
+export type { ParsedMessage, StructuredMessage, MessageBlock, MessageMetadata } from "./types";
 
 export type IngestResult = {
   agent: string;
