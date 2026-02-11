@@ -353,9 +353,11 @@ No Ollama, no network calls, no model loading. Pure SQL queries against sidecar 
 
 ### Measuring the Impact
 
-This is the north star, not a solved problem. We built `smriti compare` to measure whether context injection actually reduces tokens and tool calls. **Our initial A/B tests show mixed results** — for well-documented projects with a detailed `CLAUDE.md`, the savings are marginal. The real impact likely shows on larger codebases or ambiguous tasks where Claude would otherwise need extensive exploration.
+Does this actually save tokens? Honestly — we don't know yet. We built the tools to measure it, ran A/B tests, and the results so far are... humbling. Claude is annoyingly good at finding the right files even without help.
 
-We're publishing the tools so you can test this yourself and share your findings.
+But this is the north star, not the destination. We believe context injection will matter most on large codebases without detailed docs, ambiguous tasks that require exploration, and multi-session continuity. We just need the data to prove it (or disprove it and try something else).
+
+So we're shipping the measurement tools and asking you to help. Run A/B tests on your projects, paste the results in [Issue #13](https://github.com/zero8dotdev/smriti/issues/13), and let's figure this out together.
 
 #### A/B Testing Guide
 
