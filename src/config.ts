@@ -52,6 +52,7 @@ export const CLASSIFY_LLM_THRESHOLD = Number(
 export const DEFAULT_SEARCH_LIMIT = 20;
 export const DEFAULT_LIST_LIMIT = 50;
 export const DEFAULT_RECALL_LIMIT = 10;
+export const DEFAULT_CONTEXT_DAYS = 7;
 
 /** Git author name for team sharing */
 export const AUTHOR = Bun.env.SMRITI_AUTHOR || Bun.env.USER || "unknown";

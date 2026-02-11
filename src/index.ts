@@ -17,6 +17,13 @@ import { recall } from "./search/recall";
 import { shareKnowledge } from "./team/share";
 import { syncTeamKnowledge, listTeamContributions } from "./team/sync";
 import {
+  generateContext,
+  compareSessions,
+  resolveSessionId,
+  recentSessionIds,
+  formatCompare,
+} from "./context";
+import {
   formatSessionList,
   formatSearchResults,
   formatStatus,
@@ -74,6 +81,9 @@ Commands:
   tag <session-id> <category>  Manually tag a session
   categories                   List category tree
   categories add <id> [opts]   Add a custom category
+  context [options]             Generate project context for .smriti/CLAUDE.md
+  compare <a> <b>              Compare two sessions (tokens, tools, files)
+  compare --last               Compare last 2 sessions for current project
   share [filters]              Export knowledge to .smriti/
   sync                         Import team knowledge from .smriti/
   team                         View team contributions
@@ -101,6 +111,11 @@ Recall options:
   --synthesize                 Synthesize results via Ollama
   --model <name>               Ollama model for synthesis
   --max-tokens <n>             Max synthesis tokens
+
+Context options:
+  --project <id>               Project filter (auto-detect from cwd)
+  --days <n>                   Lookback window (default: 7)
+  --dry-run                    Print to stdout, don't write file
 
 Share options:
   --session <id>               Share specific session
@@ -300,6 +315,81 @@ async function main() {
             }))
           )
         );
+        break;
+      }
+
+      // =====================================================================
+      // CONTEXT
+      // =====================================================================
+      case "context": {
+        const result = await generateContext(db, {
+          project: getArg(args, "--project"),
+          days: Number(getArg(args, "--days")) || undefined,
+          dryRun: hasFlag(args, "--dry-run"),
+          json: hasFlag(args, "--json"),
+        });
+
+        if (hasFlag(args, "--json")) {
+          console.log(json(result));
+        } else if (result.written) {
+          console.log(result.context);
+          console.log(`\nWritten to ${result.path} (~${result.tokenEstimate} tokens)`);
+        } else {
+          console.log(result.context);
+          if (result.tokenEstimate > 0) {
+            console.log(`\n~${result.tokenEstimate} tokens`);
+          }
+        }
+        break;
+      }
+
+      // =====================================================================
+      // COMPARE
+      // =====================================================================
+      case "compare": {
+        let idA: string | null = null;
+        let idB: string | null = null;
+
+        if (hasFlag(args, "--last")) {
+          // Compare last 2 sessions for the detected project
+          const projectId = getArg(args, "--project") || (() => {
+            const { detectProject } = require("./context");
+            return detectProject(db);
+          })();
+          const recent = recentSessionIds(db, 2, projectId);
+          if (recent.length < 2) {
+            console.error("Need at least 2 sessions to compare. Run 'smriti ingest' first.");
+            process.exit(1);
+          }
+          idA = recent[1]; // older
+          idB = recent[0]; // newer
+        } else {
+          const rawA = args[1];
+          const rawB = args[2];
+          if (!rawA || !rawB) {
+            console.error("Usage: smriti compare <session-a> <session-b>");
+            console.error("       smriti compare --last [--project <id>]");
+            process.exit(1);
+          }
+          idA = resolveSessionId(db, rawA);
+          idB = resolveSessionId(db, rawB);
+          if (!idA) {
+            console.error(`Could not resolve session: ${rawA}`);
+            process.exit(1);
+          }
+          if (!idB) {
+            console.error(`Could not resolve session: ${rawB}`);
+            process.exit(1);
+          }
+        }
+
+        const result = compareSessions(db, idA!, idB!);
+
+        if (hasFlag(args, "--json")) {
+          console.log(json(result));
+        } else {
+          console.log(formatCompare(result));
+        }
         break;
       }
 

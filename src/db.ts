@@ -7,6 +7,7 @@
 
 import { Database } from "bun:sqlite";
 import { QMD_DB_PATH } from "./config";
+import { initializeMemoryTables } from "./qmd";
 
 // =============================================================================
 // Connection
@@ -318,6 +319,7 @@ export function seedDefaults(db: Database): void {
 /** Initialize DB, create tables, seed defaults. Returns the DB instance. */
 export function initSmriti(dbPath?: string): Database {
   const db = getDb(dbPath);
+  initializeMemoryTables(db);
   initializeSmritiTables(db);
   seedDefaults(db);
   return db;
