@@ -6,6 +6,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import * as sqliteVec from "sqlite-vec";
 import { QMD_DB_PATH } from "./config";
 import { initializeMemoryTables } from "./qmd";
 
@@ -21,6 +22,8 @@ export function getDb(path?: string): Database {
   _db = new Database(path || QMD_DB_PATH);
   _db.exec("PRAGMA journal_mode = WAL");
   _db.exec("PRAGMA foreign_keys = ON");
+  // Load sqlite-vec extension for vector search support
+  sqliteVec.load(_db);
   return _db;
 }
 
