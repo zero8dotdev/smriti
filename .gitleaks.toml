@@ -1,0 +1,18 @@
+# Gitleaks configuration
+# Detect secrets while excluding test/demo files and documentation
+
+[allowlist]
+# Exclude knowledge base files which contain test tokens for documentation
+paths = [
+    ".smriti/knowledge/",
+    "test/",
+    ".test.",
+    ".spec."
+]
+
+# Common test emails and IDs to ignore
+regexes = [
+    "test@.*\\.com",
+    "admin@test\\.com",
+    "@acme\\.com"
+]
