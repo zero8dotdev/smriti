@@ -31,7 +31,7 @@ export type SyncResult = {
 // =============================================================================
 
 /** Parse YAML frontmatter from a markdown file */
-function parseFrontmatter(content: string): {
+export function parseFrontmatter(content: string): {
   meta: Record<string, string>;
   body: string;
 } {

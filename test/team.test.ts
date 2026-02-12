@@ -1,4 +1,5 @@
 import { isValidCategory } from './categorize/schema';
+import { parseFrontmatter } from '../src/team/sync';
 
 // Test cases for tag parsing
 const tagTests = [
