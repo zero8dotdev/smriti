@@ -86,6 +86,10 @@ export async function ingest(
         projectPath: options.projectPath,
       });
     }
+    case "antigravity": {
+      const { ingestAntigravity } = await import("./antigravity");
+      return ingestAntigravity(baseOptions);
+    }
     case "file":
     case "generic": {
       const { ingestGeneric } = await import("./generic");
@@ -106,7 +110,7 @@ export async function ingest(
         sessionsIngested: 0,
         messagesIngested: 0,
         skipped: 0,
-        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, or file`],
+        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, antigravity, or file`],
       };
   }
 }
@@ -120,7 +124,7 @@ export async function ingestAll(
 ): Promise<IngestResult[]> {
   const results: IngestResult[] = [];
 
-  for (const agent of ["claude-code", "codex"]) {
+  for (const agent of ["claude-code", "codex", "antigravity"]) {
     const result = await ingest(db, agent, options);
     results.push(result);
   }

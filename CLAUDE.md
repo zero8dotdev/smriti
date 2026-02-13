@@ -6,6 +6,7 @@ Shared memory layer for AI-powered engineering teams. Built on [QMD](https://git
 
 ```bash
 smriti ingest claude             # Ingest Claude Code sessions
+smriti ingest antigravity        # Ingest Antigravity IDE sessions
 smriti ingest all                # Ingest from all known agents
 smriti search "query"            # Hybrid search (BM25 + vector)
 smriti recall "query"            # Smart recall with dedup
@@ -31,6 +32,7 @@ src/
 ├── ingest/
 │   ├── index.ts          # Ingest orchestrator + types
 │   ├── claude.ts         # Claude Code JSONL parser + project detection
+│   ├── antigravity.ts    # Antigravity IDE markdown parser
 │   ├── codex.ts          # Codex CLI parser
 │   ├── cursor.ts         # Cursor IDE parser
 │   └── generic.ts        # File import (chat/jsonl formats)
@@ -104,16 +106,17 @@ Claude Code stores sessions in `~/.claude/projects/<dir-name>/`. The dir name en
 
 ## Configuration
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `QMD_DB_PATH` | `~/.cache/qmd/index.sqlite` | Database path |
-| `CLAUDE_LOGS_DIR` | `~/.claude/projects` | Claude Code logs |
-| `CODEX_LOGS_DIR` | `~/.codex` | Codex CLI logs |
-| `SMRITI_PROJECTS_ROOT` | `~/zero8.dev` | Projects root for ID derivation |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
-| `QMD_MEMORY_MODEL` | `qwen3:8b-tuned` | Ollama model for synthesis |
-| `SMRITI_CLASSIFY_THRESHOLD` | `0.5` | LLM classification trigger threshold |
-| `SMRITI_AUTHOR` | `$USER` | Git author for team sharing |
+| Env Var                     | Default                       | Description                          |
+| --------------------------- | ----------------------------- | ------------------------------------ |
+| `QMD_DB_PATH`               | `~/.cache/qmd/index.sqlite`   | Database path                        |
+| `CLAUDE_LOGS_DIR`           | `~/.claude/projects`          | Claude Code logs                     |
+| `CODEX_LOGS_DIR`            | `~/.codex`                    | Codex CLI logs                       |
+| `SMRITI_ANTIGRAVITY_DIR`    | `~/.gemini/antigravity/brain` | Antigravity IDE brain                |
+| `SMRITI_PROJECTS_ROOT`      | `~/zero8.dev`                 | Projects root for ID derivation      |
+| `OLLAMA_HOST`               | `http://127.0.0.1:11434`      | Ollama endpoint                      |
+| `QMD_MEMORY_MODEL`          | `qwen3:8b-tuned`              | Ollama model for synthesis           |
+| `SMRITI_CLASSIFY_THRESHOLD` | `0.5`                         | LLM classification trigger threshold |
+| `SMRITI_AUTHOR`             | `$USER`                       | Git author for team sharing          |
 
 ## Database
 

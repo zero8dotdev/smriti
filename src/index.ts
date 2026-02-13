@@ -104,6 +104,7 @@ Ingest options:
   smriti ingest claude         Ingest Claude Code sessions
   smriti ingest codex          Ingest Codex CLI sessions
   smriti ingest cursor --project-path <path>
+  smriti ingest antigravity    Ingest Antigravity IDE sessions
   smriti ingest file <path> [--format chat|jsonl] [--title <t>]
   smriti ingest all            Ingest from all known agents
 
@@ -154,7 +155,7 @@ async function main() {
         const agent = args[1];
         if (!agent) {
           console.error("Usage: smriti ingest <agent>");
-          console.error("Agents: claude, codex, cursor, file, all");
+          console.error("Agents: claude, codex, cursor, antigravity, file, all");
           process.exit(1);
         }
 

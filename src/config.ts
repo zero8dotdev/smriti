@@ -23,8 +23,12 @@ export const CLAUDE_LOGS_DIR =
   Bun.env.CLAUDE_LOGS_DIR || join(HOME, ".claude", "projects");
 
 /** Codex CLI logs directory */
-export const CODEX_LOGS_DIR =
-  Bun.env.CODEX_LOGS_DIR || join(HOME, ".codex");
+export const CODEX_LOGS_DIR = Bun.env.CODEX_LOGS_DIR || join(HOME, ".codex");
+
+/** Antigravity IDE brain directory */
+export const ANTIGRAVITY_BRAIN_DIR =
+  Bun.env.SMRITI_ANTIGRAVITY_DIR ||
+  join(HOME, ".gemini", "antigravity", "brain");
 
 /** Default smriti team directory name within projects */
 export const SMRITI_DIR = ".smriti";
@@ -42,7 +46,7 @@ export const OLLAMA_MODEL = Bun.env.QMD_MEMORY_MODEL || "qwen3:8b-tuned";
 
 /** Confidence threshold below which rule-based classification triggers LLM */
 export const CLASSIFY_LLM_THRESHOLD = Number(
-  Bun.env.SMRITI_CLASSIFY_THRESHOLD || "0.5"
+  Bun.env.SMRITI_CLASSIFY_THRESHOLD || "0.5",
 );
 
 // =============================================================================

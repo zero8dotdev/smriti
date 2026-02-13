@@ -3,13 +3,14 @@
 ## Overview
 
 ```
-  Claude Code    Cursor    Codex    Other Agents
-       |           |         |          |
+  Claude Code    Cursor    Codex    Antigravity
+       |           |         |           |
        v           v         v          v
   ┌──────────────────────────────────────────┐
   │          Smriti Ingestion Layer           │
   │                                          │
   │  src/ingest/claude.ts   (JSONL parser)   │
+  │  src/ingest/antigravity.ts (Markdown)      │
   │  src/ingest/codex.ts    (JSONL parser)   │
   │  src/ingest/cursor.ts   (JSON parser)    │
   │  src/ingest/generic.ts  (file import)    │
@@ -130,6 +131,7 @@ Sessions are exported as markdown files with YAML frontmatter:
 ```
 
 Each file contains:
+
 - YAML frontmatter (session ID, category, project, agent, author, tags)
 - Session title as heading
 - Summary (if available)
@@ -145,21 +147,21 @@ Reads markdown files from `.smriti/knowledge/`, parses frontmatter and conversat
 
 ### QMD Tables (not modified by Smriti)
 
-| Table | Purpose |
-|-------|---------|
+| Table             | Purpose                                           |
+| ----------------- | ------------------------------------------------- |
 | `memory_sessions` | Session metadata (id, title, timestamps, summary) |
 | `memory_messages` | Messages (session_id, role, content, SHA256 hash) |
-| `memory_fts` | FTS5 index on session titles + message content |
-| `content_vectors` | 384-dim embeddings keyed by content hash |
+| `memory_fts`      | FTS5 index on session titles + message content    |
+| `content_vectors` | 384-dim embeddings keyed by content hash          |
 
 ### Smriti Tables
 
-| Table | Purpose |
-|-------|---------|
-| `smriti_agents` | Agent registry (claude-code, codex, cursor) |
-| `smriti_projects` | Project registry (id, filesystem path) |
-| `smriti_session_meta` | Maps sessions to agents and projects |
-| `smriti_categories` | Hierarchical category taxonomy |
-| `smriti_session_tags` | Category tags on sessions (with confidence) |
-| `smriti_message_tags` | Category tags on messages (with confidence) |
-| `smriti_shares` | Deduplication tracking for team sharing |
+| Table                 | Purpose                                                  |
+| --------------------- | -------------------------------------------------------- |
+| `smriti_agents`       | Agent registry (claude-code, codex, cursor, antigravity) |
+| `smriti_projects`     | Project registry (id, filesystem path)                   |
+| `smriti_session_meta` | Maps sessions to agents and projects                     |
+| `smriti_categories`   | Hierarchical category taxonomy                           |
+| `smriti_session_tags` | Category tags on sessions (with confidence)              |
+| `smriti_message_tags` | Category tags on messages (with confidence)              |
+| `smriti_shares`       | Deduplication tracking for team sharing                  |

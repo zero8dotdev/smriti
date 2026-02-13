@@ -8,19 +8,20 @@ Built on top of [QMD](https://github.com/tobi/qmd) by Tobi Lütke.
 
 ## The Problem
 
-Your team ships code with AI agents every day — Claude Code, Cursor, Codex. But every agent has a blind spot:
+Your team ships code with AI agents every day — Claude Code, Cursor, Antigravity, Codex. But every agent has a blind spot:
 
 > **They don't remember anything.** Not from yesterday. Not from each other. Not from your teammates.
 
 Here's what that looks like:
 
-| Monday | Tuesday |
-|--------|---------|
+| Monday                                                        | Tuesday                                             |
+| ------------------------------------------------------------- | --------------------------------------------------- |
 | Your teammate spends 3 hours with Claude on an auth migration | You open a fresh session and ask the same questions |
-| Claude figures out the right approach, makes key decisions | Your Claude has no idea any of that happened |
-| Architectural insights, debugging breakthroughs, trade-offs | All of it — gone |
+| Claude figures out the right approach, makes key decisions    | Your Claude has no idea any of that happened        |
+| Architectural insights, debugging breakthroughs, trade-offs   | All of it — gone                                    |
 
 The result:
+
 - **Duplicated work** — same questions asked across the team, different answers every time
 - **Lost decisions** — "why did we do it this way?" lives in someone's closed chat window
 - **Zero continuity** — each session starts from scratch, no matter how much your team has already figured out
@@ -29,7 +30,7 @@ The agents are brilliant. But they're amnesic. **This is the biggest gap in AI-a
 
 ## What Smriti Does
 
-**Smriti** (Sanskrit: *memory*) is a shared memory layer that sits underneath all your AI agents.
+**Smriti** (Sanskrit: _memory_) is a shared memory layer that sits underneath all your AI agents.
 
 Every conversation &rarr; automatically captured &rarr; indexed &rarr; searchable. One command to recall what matters.
 
@@ -100,6 +101,7 @@ curl -fsSL https://raw.githubusercontent.com/zero8dotdev/smriti/main/install.sh 
 ```
 
 This will:
+
 - Install [Bun](https://bun.sh) if you don't have it
 - Clone Smriti to `~/.smriti`
 - Set up the `smriti` CLI
@@ -120,6 +122,7 @@ This will:
 smriti ingest claude          # Claude Code sessions
 smriti ingest codex           # Codex CLI sessions
 smriti ingest cursor --project-path ./myapp
+smriti ingest antigravity     # Antigravity IDE sessions
 smriti ingest file transcript.txt --title "Planning Session"
 smriti ingest all             # All known agents at once
 
@@ -155,8 +158,8 @@ smriti team                   # View team contributions
 ## How It Works
 
 ```
-  Claude Code    Cursor    Codex    Other Agents
-       |           |         |          |
+  Claude Code    Cursor    Codex    Antigravity
+       |           |         |           |
        v           v         v          v
   ┌──────────────────────────────────────────┐
   │          Smriti Ingestion Layer           │
@@ -193,15 +196,15 @@ Sessions and messages are automatically tagged into a hierarchical category tree
 
 Smriti ships with 7 top-level categories and 21 subcategories:
 
-| Category | Subcategories |
-|----------|---------------|
-| `code` | `code/implementation`, `code/pattern`, `code/review`, `code/snippet` |
+| Category       | Subcategories                                                           |
+| -------------- | ----------------------------------------------------------------------- |
+| `code`         | `code/implementation`, `code/pattern`, `code/review`, `code/snippet`    |
 | `architecture` | `architecture/design`, `architecture/decision`, `architecture/tradeoff` |
-| `bug` | `bug/report`, `bug/fix`, `bug/investigation` |
-| `feature` | `feature/requirement`, `feature/design`, `feature/implementation` |
-| `project` | `project/setup`, `project/config`, `project/dependency` |
-| `decision` | `decision/technical`, `decision/process`, `decision/tooling` |
-| `topic` | `topic/learning`, `topic/explanation`, `topic/comparison` |
+| `bug`          | `bug/report`, `bug/fix`, `bug/investigation`                            |
+| `feature`      | `feature/requirement`, `feature/design`, `feature/implementation`       |
+| `project`      | `project/setup`, `project/config`, `project/dependency`                 |
+| `decision`     | `decision/technical`, `decision/process`, `decision/tooling`            |
+| `topic`        | `topic/learning`, `topic/explanation`, `topic/comparison`               |
 
 ### Auto-Classification
 
@@ -259,13 +262,13 @@ smriti categories add ops/runbook --name "Runbooks" --parent ops --description "
 
 The `--category` flag works across search, recall, list, and share:
 
-| Command | Effect of `--category` |
-|---------|----------------------|
-| `smriti list` | Shows categories column; filters sessions to matching category |
-| `smriti search` | Filters full-text search results to matching category |
-| `smriti recall` | Filters recall context; works with `--synthesize` |
-| `smriti share` | Controls which sessions are exported; files organized into `.smriti/knowledge/` |
-| `smriti status` | Shows session count per category (no filter flag — always shows all) |
+| Command         | Effect of `--category`                                                          |
+| --------------- | ------------------------------------------------------------------------------- |
+| `smriti list`   | Shows categories column; filters sessions to matching category                  |
+| `smriti search` | Filters full-text search results to matching category                           |
+| `smriti recall` | Filters recall context; works with `--synthesize`                               |
+| `smriti share`  | Controls which sessions are exported; files organized into `.smriti/knowledge/` |
+| `smriti status` | Shows session count per category (no filter flag — always shows all)            |
 
 **Hierarchical filtering** — Filtering by a parent category automatically includes all its children. `--category decision` matches `decision/technical`, `decision/process`, and `decision/tooling`.
 
@@ -336,16 +339,20 @@ The output looks like this:
 > Auto-generated by `smriti context` on 2026-02-11. Do not edit manually.
 
 ### Recent Sessions (last 7 days)
+
 - **2h ago** Enriched ingestion pipeline (12 turns) [code]
 - **1d ago** Search & recall pipeline (8 turns) [feature]
 
 ### Hot Files
+
 `src/db.ts` (14 ops), `src/ingest/claude.ts` (11 ops), `src/search/index.ts` (8 ops)
 
 ### Git Activity
+
 - commit `main`: "Fix auth token refresh" (2026-02-10)
 
 ### Usage
+
 5 sessions, 48 turns, ~125K input / ~35K output tokens
 ```
 
@@ -407,12 +414,12 @@ Tool breakdown:
 
 #### What We've Tested So Far
 
-| Task Type | Context Impact | Notes |
-|-----------|---------------|-------|
-| Knowledge questions ("how does X work?") | Minimal | Both sessions found the right files immediately from project CLAUDE.md |
-| Implementation tasks ("add --since flag") | Minimal | Small, well-scoped tasks don't need exploration |
-| Ambiguous/exploration tasks | Untested | Expected sweet spot — hot files guide Claude to the right area |
-| Large codebases (no project CLAUDE.md) | Untested | Expected sweet spot — context replaces missing documentation |
+| Task Type                                 | Context Impact | Notes                                                                  |
+| ----------------------------------------- | -------------- | ---------------------------------------------------------------------- |
+| Knowledge questions ("how does X work?")  | Minimal        | Both sessions found the right files immediately from project CLAUDE.md |
+| Implementation tasks ("add --since flag") | Minimal        | Small, well-scoped tasks don't need exploration                        |
+| Ambiguous/exploration tasks               | Untested       | Expected sweet spot — hot files guide Claude to the right area         |
+| Large codebases (no project CLAUDE.md)    | Untested       | Expected sweet spot — context replaces missing documentation           |
 
 **We need your help.** If you run A/B tests on your projects, please share your results in [GitHub Issues](https://github.com/zero8dotdev/smriti/issues). Include the `smriti compare` output and a description of the task. This data will help us understand where context injection actually matters.
 
@@ -420,11 +427,11 @@ Tool breakdown:
 
 Separate from context injection, Smriti's search and recall pipeline compresses past conversations:
 
-| Scenario | Raw Conversations | Via Smriti | Reduction |
-|----------|------------------|------------|-----------|
-| Relevant context from past sessions | ~20,000 tokens | ~500 tokens | **40x** |
-| Multi-session recall + synthesis | ~10,000 tokens | ~200 tokens | **50x** |
-| Full project conversation history | 50,000+ tokens | ~500 tokens | **100x** |
+| Scenario                            | Raw Conversations | Via Smriti  | Reduction |
+| ----------------------------------- | ----------------- | ----------- | --------- |
+| Relevant context from past sessions | ~20,000 tokens    | ~500 tokens | **40x**   |
+| Multi-session recall + synthesis    | ~10,000 tokens    | ~200 tokens | **50x**   |
+| Full project conversation history   | 50,000+ tokens    | ~500 tokens | **100x**  |
 
 Lower token spend, faster responses, more room for the actual work in your context window.
 
@@ -455,7 +462,7 @@ Each project gets its own `.smriti/` folder in its repo root. Sessions are tagge
 Not yet — Smriti is git-native today. Issue tracker integrations are on the roadmap. If you have ideas, open a discussion in [GitHub Issues](https://github.com/zero8dotdev/smriti/issues).
 
 **How does this help preserve existing features during changes?**
-The reasoning behind each code change is captured and searchable. When an AI agent starts a new session, it can recall *why* something was built a certain way — reducing the chance of accidentally breaking existing behavior.
+The reasoning behind each code change is captured and searchable. When an AI agent starts a new session, it can recall _why_ something was built a certain way — reducing the chance of accidentally breaking existing behavior.
 
 ## Uninstall
 

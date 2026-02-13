@@ -238,6 +238,12 @@ const DEFAULT_AGENTS = [
     log_pattern: ".cursor/**/*.json",
     parser: "cursor",
   },
+  {
+    id: "antigravity",
+    display_name: "Antigravity IDE",
+    log_pattern: "~/.gemini/antigravity/brain/*/*.md",
+    parser: "antigravity",
+  },
 ] as const;
 
 /** Default category taxonomy */
