@@ -8,12 +8,16 @@ All notable changes to smriti are documented here. Format:
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-24
+
 ### Added
 
 - GitHub Copilot chat ingestion (`smriti ingest copilot`) — VS Code on macOS,
   Linux, Windows
 - Windows installer (`install.ps1`) and uninstaller (`uninstall.ps1`)
 - GitHub Actions: `ci.yml`, `install-test.yml`, `release.yml`
+- `smriti upgrade` command support
+- Cross-platform path resolution fixes for Windows (rules and templates)
 
 ---
 
