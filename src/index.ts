@@ -92,6 +92,7 @@ Commands:
   status                       Memory statistics
   projects                     List projects
   embed                        Embed new messages for vector search
+  upgrade                      Update smriti to the latest version
   help                         Show this help
 
 Filters (apply to search, recall, list, share):
@@ -103,9 +104,11 @@ Filters (apply to search, recall, list, share):
 Ingest options:
   smriti ingest claude         Ingest Claude Code sessions
   smriti ingest codex          Ingest Codex CLI sessions
+  smriti ingest cline          Ingest Cline CLI sessions
+  smriti ingest copilot        Ingest GitHub Copilot (VS Code) sessions
   smriti ingest cursor --project-path <path>
   smriti ingest file <path> [--format chat|jsonl] [--title <t>]
-  smriti ingest all            Ingest from all known agents
+  smriti ingest all            Ingest from all known agents (claude, codex, cline, copilot)
 
 Recall options:
   --synthesize                 Synthesize results via Ollama
@@ -122,15 +125,19 @@ Share options:
   --output <dir>               Custom output directory
   --no-reflect                 Skip LLM reflections (on by default)
   --reflect-model <name>       Ollama model for reflections
+  --segmented                  Use 3-stage segmentation pipeline (beta)
+  --min-relevance <float>      Relevance threshold for segmented mode (default: 6)
 
 Examples:
   smriti ingest claude
+  smriti ingest copilot
   smriti search "auth" --project myapp
   smriti recall "how did we set up auth" --synthesize
   smriti categorize
   smriti list --category decision --project myapp
   smriti share --category decision
   smriti sync
+  smriti upgrade
 `;
 
 async function main() {
@@ -154,7 +161,7 @@ async function main() {
         const agent = args[1];
         if (!agent) {
           console.error("Usage: smriti ingest <agent>");
-          console.error("Agents: claude, codex, cursor, file, all");
+          console.error("Agents: claude, codex, cursor, cline, copilot, file, all");
           process.exit(1);
         }
 
@@ -404,6 +411,8 @@ async function main() {
           outputDir: getArg(args, "--output"),
           reflect: !hasFlag(args, "--no-reflect"),
           reflectModel: getArg(args, "--reflect-model"),
+          segmented: hasFlag(args, "--segmented"),
+          minRelevance: Number(getArg(args, "--min-relevance")) || undefined,
         });
 
         console.log(formatShareResult(result));
@@ -577,6 +586,103 @@ async function main() {
 
         console.log(`Embedded ${count} new messages.`);
         break;
+      }
+
+      // =====================================================================
+      // UPGRADE
+      // =====================================================================
+      case "upgrade": {
+        const { SMRITI_HOME } = await import("./config");
+        const { existsSync } = await import("fs");
+
+        if (!existsSync(SMRITI_HOME)) {
+          console.error(`smriti install directory not found: ${SMRITI_HOME}`);
+          console.error("If you installed smriti manually, set SMRITI_HOME in your environment.");
+          process.exit(1);
+        }
+
+        console.log(`Upgrading smriti in ${SMRITI_HOME}...`);
+
+        // git pull
+        const pull = Bun.spawnSync(["git", "pull", "--ff-only"], { cwd: SMRITI_HOME });
+        const pullOut = pull.stdout.toString().trim();
+        const pullErr = pull.stderr.toString().trim();
+        if (pull.exitCode !== 0) {
+          console.error("git pull failed:");
+          console.error(pullErr || pullOut);
+          process.exit(1);
+        }
+        console.log(pullOut || "Already up to date.");
+
+        // bun install (pick up any new dependencies)
+        console.log("Installing dependencies...");
+        const install = Bun.spawnSync(["bun", "install", "--frozen-lockfile"], { cwd: SMRITI_HOME });
+        if (install.exitCode !== 0) {
+          // Retry without frozen lockfile (lockfile may have been updated)
+          Bun.spawnSync(["bun", "install"], { cwd: SMRITI_HOME });
+        }
+
+        console.log("Done. smriti is up to date.");
+        break;
+      }
+
+      // =====================================================================
+      // INIT (Project initialization with language detection)
+      // =====================================================================
+      case "init": {
+        const projectPath = args[1] || process.cwd();
+        const forceDetection = hasFlag(args, "--force");
+        const overrideLanguage = getArg(args, "--language");
+        const dryRun = hasFlag(args, "--dry-run");
+
+        console.log(`Initializing Smriti for project: ${projectPath}`);
+
+        // TODO: Implement in Phase 1 completion
+        console.log("(This feature is coming in Phase 1 completion)");
+        break;
+      }
+
+      // =====================================================================
+      // RULES (Rule management)
+      // =====================================================================
+      case "rules": {
+        const subcommand = args[1];
+
+        if (!subcommand || subcommand === "list") {
+          // TODO: Implement in Phase 1 completion
+          console.log("Available rules: (coming soon)");
+          break;
+        } else if (subcommand === "add") {
+          const id = args[2];
+          const pattern = args[3];
+          const category = args[4];
+
+          if (!id || !pattern || !category) {
+            console.error(
+              "Usage: smriti rules add <id> <pattern> <category> [--weight <w>] [--description <desc>]"
+            );
+            process.exit(1);
+          }
+
+          // TODO: Implement in Phase 1 completion
+          console.log("(This feature is coming in Phase 1 completion)");
+          break;
+        } else if (subcommand === "validate") {
+          const filePath = args[2] || ".smriti/rules/custom.yml";
+
+          // TODO: Implement in Phase 1 completion
+          console.log(`Validating rules from ${filePath}...`);
+          console.log("(This feature is coming in Phase 1 completion)");
+          break;
+        } else if (subcommand === "update") {
+          // TODO: Implement in Phase 1 completion
+          console.log("Checking for rule updates...");
+          console.log("(This feature is coming in Phase 1 completion)");
+          break;
+        } else {
+          console.error("Unknown rules subcommand. Use: list, add, validate, update");
+          process.exit(1);
+        }
       }
 
       // =====================================================================

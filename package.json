@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "node-llama-cpp": "^3.0.0",
-    "qmd": "github:zero8dotdev/qmd"
+    "qmd": "file:./qmd"
   },
   "devDependencies": {
     "@types/bun": "latest"

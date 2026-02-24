@@ -81,10 +81,15 @@ export async function ingest(
     }
     case "cursor": {
       const { ingestCursor } = await import("./cursor");
-      return ingestCursor({
-        ...baseOptions,
-        projectPath: options.projectPath,
-      });
+      return ingestCursor({ ...baseOptions, projectPath: options.projectPath });
+    }
+    case "cline": {
+      const { ingestCline } = await import("./cline");
+      return ingestCline(baseOptions);
+    }
+    case "copilot": {
+      const { ingestCopilot } = await import("./copilot");
+      return ingestCopilot({ ...baseOptions, projectPath: options.projectPath });
     }
     case "file":
     case "generic": {
@@ -106,7 +111,7 @@ export async function ingest(
         sessionsIngested: 0,
         messagesIngested: 0,
         skipped: 0,
-        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, or file`],
+        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, cline, copilot, or file`],
       };
   }
 }
@@ -120,7 +125,7 @@ export async function ingestAll(
 ): Promise<IngestResult[]> {
   const results: IngestResult[] = [];
 
-  for (const agent of ["claude-code", "codex"]) {
+  for (const agent of ["claude-code", "codex", "cline", "copilot"]) {
     const result = await ingest(db, agent, options);
     results.push(result);
   }

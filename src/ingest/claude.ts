@@ -413,11 +413,6 @@ export async function ingestClaude(
   };
 
   for (const session of sessions) {
-    if (existingSessionIds?.has(session.sessionId)) {
-      result.skipped++;
-      continue;
-    }
-
     try {
       const file = Bun.file(session.filePath);
       const content = await file.text();
@@ -428,19 +423,32 @@ export async function ingestClaude(
         continue;
       }
 
+      // Incremental ingestion: count existing messages and only process new ones.
+      // This works because Claude JSONL files are append-only and message order is stable.
+      const existingMessageCount: number =
+        (db.prepare(`SELECT COUNT(*) as count FROM memory_messages WHERE session_id = ?`)
+          .get(session.sessionId) as { count: number } | null)?.count ?? 0;
+
+      const newMessages = structuredMessages.slice(existingMessageCount);
+
+      if (newMessages.length === 0) {
+        result.skipped++;
+        continue;
+      }
+
       // Derive project info
       const projectId = deriveProjectId(session.projectDir);
       const projectPath = deriveProjectPath(session.projectDir);
       upsertProject(db, projectId, projectPath);
 
-      // Extract title from first user message
+      // Extract title from first user message (across all messages for consistency)
       const firstUser = structuredMessages.find((m) => m.role === "user");
       const title = firstUser
         ? firstUser.plainText.slice(0, 100).replace(/\n/g, " ")
         : "";
 
-      // Process each structured message
-      for (const msg of structuredMessages) {
+      // Process only new messages
+      for (const msg of newMessages) {
         // Store via QMD (backward-compatible: plainText as content)
         const stored = await addMessage(
           db,
@@ -563,15 +571,15 @@ export async function ingestClaude(
         }
       }
 
-      // Attach Smriti metadata
-      upsertSessionMeta(db, session.sessionId, "claude-code", projectId);
-
       result.sessionsIngested++;
-      result.messagesIngested += structuredMessages.length;
+      result.messagesIngested += newMessages.length;
+
+      // Ensure session meta exists (idempotent upsert)
+      upsertSessionMeta(db, session.sessionId, "claude-code", projectId);
 
       if (onProgress) {
         onProgress(
-          `Ingested ${session.sessionId} (${structuredMessages.length} messages)`
+          `Ingested ${session.sessionId} (${newMessages.length} new messages, ${existingMessageCount} existing)`
         );
       }
     } catch (err: any) {

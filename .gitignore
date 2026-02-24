@@ -12,6 +12,10 @@ bun.lockb
 .cache/
 dist/
 build/
+website/.next/
+website/out/
+website/node_modules/
+website/.turbo/
 
 # Logs
 *.log
@@ -34,3 +38,8 @@ coverage/
 # Temporary
 .tmp/
 temp/
+
+# Smriti (auto-generated files only)
+.smriti/CLAUDE.md
+.smriti/knowledge/
+.smriti/index.json

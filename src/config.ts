@@ -26,8 +26,27 @@ export const CLAUDE_LOGS_DIR =
 export const CODEX_LOGS_DIR =
   Bun.env.CODEX_LOGS_DIR || join(HOME, ".codex");
 
+/** Cline CLI tasks directory */
+export const CLINE_LOGS_DIR =
+  Bun.env.CLINE_LOGS_DIR || join(HOME, ".cline", "tasks");
+
+/** GitHub Copilot (VS Code) workspaceStorage root — auto-detected per OS if not set */
+export const COPILOT_STORAGE_DIR = Bun.env.COPILOT_STORAGE_DIR || "";
+
+/** Daemon PID file path */
+export const DAEMON_PID_FILE = join(HOME, ".cache", "smriti", "daemon.pid");
+
+/** Daemon log file path */
+export const DAEMON_LOG_FILE = join(HOME, ".cache", "smriti", "daemon.log");
+
+/** Daemon debounce interval in ms — wait this long after last file change before ingesting */
+export const DAEMON_DEBOUNCE_MS = Number(Bun.env.SMRITI_DAEMON_DEBOUNCE_MS || "30000");
+
 /** Default smriti team directory name within projects */
 export const SMRITI_DIR = ".smriti";
+
+/** smriti install directory (where this repo lives) */
+export const SMRITI_HOME = join(HOME, ".smriti");
 
 /** Projects root directory for smart project ID derivation */
 export const PROJECTS_ROOT =

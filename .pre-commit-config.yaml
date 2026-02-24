@@ -1,0 +1,25 @@
+repos:
+  # Gitleaks - detect secrets
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+        name: Gitleaks - Detect secrets
+        entry: gitleaks detect --source . -c .gitleaks.toml
+        language: system
+        stages: [commit]
+        pass_filenames: false
+        always_run: true
+
+  # Prevent large files
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

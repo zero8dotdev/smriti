@@ -1,0 +1,65 @@
+name: Install Test
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  install-smoke-test:
+    name: Install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            install_cmd: bash install.sh --ci
+            remove_cmd: bash uninstall.sh --ci
+          - os: macos-latest
+            install_cmd: bash install.sh --ci
+            remove_cmd: bash uninstall.sh --ci
+          - os: windows-latest
+            install_cmd: pwsh install.ps1 -CI
+            remove_cmd: pwsh uninstall.ps1 -CI
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Run installer
+        run: ${{ matrix.install_cmd }}
+
+      - name: Smoke — smriti --version
+        run: smriti --version
+
+      - name: Smoke — smriti status
+        run: smriti status
+
+      - name: Smoke — smriti ingest claude (no sessions OK)
+        run: smriti ingest claude
+        continue-on-error: false
+
+      - name: Smoke — smriti ingest copilot (no VS Code OK)
+        run: smriti ingest copilot
+        continue-on-error: true
+
+      - name: Run uninstaller
+        run: ${{ matrix.remove_cmd }}
+
+      - name: Verify smriti removed from PATH
+        shell: bash
+        run: |
+          if command -v smriti &>/dev/null; then
+            echo "FAIL: smriti still on PATH after uninstall"
+            exit 1
+          fi
+          echo "OK: smriti not found after uninstall"

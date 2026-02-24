@@ -11,6 +11,19 @@
 
 set -euo pipefail
 
+# --- CI mode (used by GitHub Actions install-test.yml) -----------------------
+# Pass --ci to run non-interactively with a temp HOME directory.
+CI_MODE=0
+for arg in "$@"; do
+  [ "$arg" = "--ci" ] && CI_MODE=1
+done
+
+if [ "$CI_MODE" = "1" ]; then
+  export HOME="$(mktemp -d /tmp/smriti-ci-XXXXX)"
+  export SMRITI_NO_HOOK=1
+  echo "CI mode: using temp HOME $HOME"
+fi
+
 # --- Configuration -----------------------------------------------------------
 
 SMRITI_DIR="${SMRITI_DIR:-$HOME/.smriti}"
@@ -235,6 +248,7 @@ echo ""
 echo "  Get started:"
 echo "    smriti help              Show all commands"
 echo "    smriti ingest claude     Import Claude Code conversations"
+echo "    smriti ingest copilot    Import GitHub Copilot (VS Code) conversations"
 echo "    smriti status            Show memory statistics"
 echo "    smriti search \"query\"    Search across all memory"
 echo ""

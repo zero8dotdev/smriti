@@ -1,12 +1,17 @@
 # Smriti
 
-Shared memory layer for AI-powered engineering teams. Built on [QMD](https://github.com/tobi/qmd).
+Shared memory layer for AI-powered engineering teams. Built on
+[QMD](https://github.com/tobi/qmd).
 
 ## Quick Reference
 
 ```bash
 smriti ingest claude             # Ingest Claude Code sessions
-smriti ingest all                # Ingest from all known agents
+smriti ingest codex              # Ingest Codex CLI sessions
+smriti ingest cline              # Ingest Cline CLI sessions
+smriti ingest copilot            # Ingest GitHub Copilot (VS Code) sessions
+smriti ingest cursor --project-path ./myapp
+smriti ingest all                # All known agents
 smriti search "query"            # Hybrid search (BM25 + vector)
 smriti recall "query"            # Smart recall with dedup
 smriti recall "query" --synthesize  # Synthesize via Ollama
@@ -33,6 +38,8 @@ src/
 │   ├── claude.ts         # Claude Code JSONL parser + project detection
 │   ├── codex.ts          # Codex CLI parser
 │   ├── cursor.ts         # Cursor IDE parser
+│   ├── cline.ts          # Cline CLI parser (enriched blocks)
+│   ├── copilot.ts        # GitHub Copilot (VS Code) parser
 │   └── generic.ts        # File import (chat/jsonl formats)
 ├── search/
 │   ├── index.ts          # Filtered FTS search + session listing
@@ -46,7 +53,7 @@ src/
     ├── formatter.ts      # Sanitization + doc formatting pipeline
     ├── reflect.ts        # LLM-powered session reflection via Ollama
     └── prompts/
-        └── share-reflect.md  # Customizable reflection prompt template
+        └── share-reflect.md
 test/
 ├── ingest.test.ts        # Parser + project detection tests
 ├── search.test.ts        # Search + recall tests
@@ -55,6 +62,11 @@ test/
 ├── team.test.ts          # Share + sync tests
 ├── formatter.test.ts     # Formatter + sanitization tests
 └── reflect.test.ts       # Reflection parsing tests
+.github/workflows/
+├── ci.yml                # bun test on Ubuntu, macOS, Windows
+├── install-test.yml      # Full install + smoke test on all 3 OSes
+├── release.yml           # GitHub Release on v*.*.* tag
+└── secret-scan.yml       # Gitleaks + detect-secrets
 ```
 
 ## Architecture
@@ -62,7 +74,7 @@ test/
 All QMD imports go through `src/qmd.ts` — a single re-export hub:
 
 ```ts
-import { addMessage, searchMemoryFTS, recallMemories } from "./qmd";
+import { addMessage, recallMemories, searchMemoryFTS } from "./qmd";
 import { hashContent } from "./qmd";
 import { ollamaRecall } from "./qmd";
 ```
@@ -73,9 +85,13 @@ Never import from QMD directly in other files. Always go through `src/qmd.ts`.
 
 ### Project Detection
 
-Claude Code stores sessions in `~/.claude/projects/<dir-name>/`. The dir name encodes the filesystem path with `-` replacing `/` (e.g. `-Users-zero8-zero8.dev-openfga`).
+Claude Code stores sessions in `~/.claude/projects/<dir-name>/`. The dir name
+encodes the filesystem path with `-` replacing `/` (e.g.
+`-Users-zero8-zero8.dev-openfga`).
 
-`deriveProjectPath()` reconstructs the real path using greedy `existsSync()` matching. `deriveProjectId()` strips `PROJECTS_ROOT` (default `~/zero8.dev`) to get a clean name like `openfga`.
+`deriveProjectPath()` reconstructs the real path using greedy `existsSync()`
+matching. `deriveProjectId()` strips `PROJECTS_ROOT` (default `~/zero8.dev`) to
+get a clean name like `openfga`.
 
 ### Ingestion Pipeline
 
@@ -87,33 +103,39 @@ Claude Code stores sessions in `~/.claude/projects/<dir-name>/`. The dir name en
 
 ### Search
 
-- **Filtered search** (`searchFiltered`): FTS5 with JOINs to Smriti metadata tables for category/project/agent filtering
+- **Filtered search** (`searchFiltered`): FTS5 with JOINs to Smriti metadata
+  tables for category/project/agent filtering
 - **Unfiltered search** (`searchFTS`, `searchVec`): Delegates directly to QMD
 - **Recall**: Search → deduplicate by session → optionally synthesize via Ollama
 
 ### Team Sharing
 
-- `smriti share`: Exports sessions as clean documentation to `.smriti/knowledge/`
+- `smriti share`: Exports sessions as clean documentation to
+  `.smriti/knowledge/`
   - Sanitizes XML noise, interrupt markers, API errors, narration filler
   - Filters noise-only sessions, merges consecutive same-role messages
   - Generates LLM reflections via Ollama by default (use `--no-reflect` to skip)
   - Generates `.smriti/CLAUDE.md` so Claude Code auto-discovers shared knowledge
   - Customizable reflection prompt at `.smriti/prompts/share-reflect.md`
-- `smriti sync`: Imports markdown files from `.smriti/knowledge/` back into local DB
+- `smriti sync`: Imports markdown files from `.smriti/knowledge/` back into
+  local DB
 - Deduplication via content hashing — same content won't import twice
 
 ## Configuration
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `QMD_DB_PATH` | `~/.cache/qmd/index.sqlite` | Database path |
-| `CLAUDE_LOGS_DIR` | `~/.claude/projects` | Claude Code logs |
-| `CODEX_LOGS_DIR` | `~/.codex` | Codex CLI logs |
-| `SMRITI_PROJECTS_ROOT` | `~/zero8.dev` | Projects root for ID derivation |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
-| `QMD_MEMORY_MODEL` | `qwen3:8b-tuned` | Ollama model for synthesis |
-| `SMRITI_CLASSIFY_THRESHOLD` | `0.5` | LLM classification trigger threshold |
-| `SMRITI_AUTHOR` | `$USER` | Git author for team sharing |
+| Env Var                     | Default                     | Description                            |
+| --------------------------- | --------------------------- | -------------------------------------- |
+| `QMD_DB_PATH`               | `~/.cache/qmd/index.sqlite` | Database path                          |
+| `CLAUDE_LOGS_DIR`           | `~/.claude/projects`        | Claude Code logs                       |
+| `CODEX_LOGS_DIR`            | `~/.codex`                  | Codex CLI logs                         |
+| `CLINE_LOGS_DIR`            | `~/.cline/tasks`            | Cline CLI tasks                        |
+| `COPILOT_STORAGE_DIR`       | auto-detected per OS        | VS Code workspaceStorage root override |
+| `SMRITI_PROJECTS_ROOT`      | `~/zero8.dev`               | Projects root for ID derivation        |
+| `OLLAMA_HOST`               | `http://127.0.0.1:11434`    | Ollama endpoint                        |
+| `QMD_MEMORY_MODEL`          | `qwen3:8b-tuned`            | Ollama model for synthesis             |
+| `SMRITI_CLASSIFY_THRESHOLD` | `0.5`                       | LLM classification trigger threshold   |
+| `SMRITI_AUTHOR`             | `$USER`                     | Git author for team sharing            |
+| `SMRITI_DAEMON_DEBOUNCE_MS` | `30000`                     | Daemon file-stability wait (v0.4.0)    |
 
 ## Database
 
@@ -126,7 +148,8 @@ Smriti extends QMD's tables with its own metadata:
 - `smriti_message_tags` — category tags on messages
 - `smriti_shares` — dedup tracking for team sharing
 
-QMD's core tables: `memory_sessions`, `memory_messages`, `memory_fts`, `content_vectors`.
+QMD's core tables: `memory_sessions`, `memory_messages`, `memory_fts`,
+`content_vectors`.
 
 ## Development
 
@@ -138,9 +161,13 @@ bun --hot src/index.ts  # Dev mode with hot reload
 
 ## Design Decisions
 
-1. **Single QMD import hub** (`src/qmd.ts`): No scattered dynamic imports, clean dependency boundary
-2. **Greedy path resolution**: Handles ambiguous dashes in Claude dir names via `existsSync()`
-3. **Embeddings share QMD's tables**: `content_vectors` + `vectors_vec`, no duplication
-4. **Two-step vector search**: Query `vectors_vec` first, then JOIN to avoid sqlite-vec hang
+1. **Single QMD import hub** (`src/qmd.ts`): No scattered dynamic imports, clean
+   dependency boundary
+2. **Greedy path resolution**: Handles ambiguous dashes in Claude dir names via
+   `existsSync()`
+3. **Embeddings share QMD's tables**: `content_vectors` + `vectors_vec`, no
+   duplication
+4. **Two-step vector search**: Query `vectors_vec` first, then JOIN to avoid
+   sqlite-vec hang
 5. **Content-addressable messages**: SHA256 hashing, same as QMD documents
 6. **Auto-save via hooks**: Claude Code conversations saved without user action

@@ -1,5 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { Database } from "bun:sqlite";
+import { initializeMemoryTables } from "../src/qmd";
 import { initializeSmritiTables, seedDefaults, upsertSessionMeta, upsertProject, tagSession } from "../src/db";
 import { listSessions } from "../src/search/index";
 
@@ -9,40 +10,8 @@ beforeAll(() => {
   db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
 
-  // Create QMD tables
-  db.exec(`
-    CREATE TABLE memory_sessions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      summary TEXT,
-      summary_at TEXT,
-      active INTEGER NOT NULL DEFAULT 1
-    );
-    CREATE TABLE memory_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      metadata TEXT,
-      FOREIGN KEY (session_id) REFERENCES memory_sessions(id) ON DELETE CASCADE
-    );
-    CREATE INDEX idx_memory_messages_session ON memory_messages(session_id);
-    CREATE VIRTUAL TABLE memory_fts USING fts5(
-      session_title, role, content,
-      tokenize='porter unicode61'
-    );
-    CREATE TRIGGER memory_messages_ai AFTER INSERT ON memory_messages BEGIN
-      INSERT INTO memory_fts(rowid, session_title, role, content)
-      SELECT NEW.rowid,
-             COALESCE((SELECT title FROM memory_sessions WHERE id = NEW.session_id), ''),
-             NEW.role,
-             NEW.content;
-    END;
-  `);
+  // Create core QMD tables
+  initializeMemoryTables(db);
 
   initializeSmritiTables(db);
   seedDefaults(db);

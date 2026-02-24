@@ -9,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import { tagMessage, tagSession } from "../db";
 import { CLASSIFY_LLM_THRESHOLD, OLLAMA_HOST, OLLAMA_MODEL } from "../config";
 import { ALL_CATEGORY_IDS } from "./schema";
+import { getRuleManager, type Rule } from "./rules/loader";
 
 // =============================================================================
 // Types
@@ -24,60 +25,19 @@ export type ClassifyResult = {
 // Rule-Based Classification
 // =============================================================================
 
-/** Keyword patterns mapped to categories with weights */
-const RULES: Array<{
-  pattern: RegExp;
-  category: string;
-  weight: number;
-}> = [
-  // Bug-related
-  { pattern: /\b(bug|error|crash|exception|traceback|stack\s*trace|segfault)\b/i, category: "bug/report", weight: 0.8 },
-  { pattern: /\b(fix(ed|ing)?|patch(ed|ing)?|resolve[ds]?|hotfix)\b/i, category: "bug/fix", weight: 0.7 },
-  { pattern: /\b(debug(ging)?|investigat(e|ing)|diagnos(e|ing)|root\s*cause)\b/i, category: "bug/investigation", weight: 0.7 },
-
-  // Code patterns
-  { pattern: /\b(refactor(ing)?|clean\s*up|pattern|idiom|best\s*practice)\b/i, category: "code/pattern", weight: 0.7 },
-  { pattern: /\b(implement(ation|ed|ing)?|code|function|class|method|module)\b/i, category: "code/implementation", weight: 0.5 },
-  { pattern: /\b(review|pr|pull\s*request|code\s*review|feedback)\b/i, category: "code/review", weight: 0.6 },
-  { pattern: /\b(snippet|example|sample|boilerplate|template)\b/i, category: "code/snippet", weight: 0.6 },
-
-  // Architecture
-  { pattern: /\b(architect(ure)?|system\s*design|high[\s-]?level|diagram|component)\b/i, category: "architecture/design", weight: 0.7 },
-  { pattern: /\b(trade[\s-]?off|pro(s)?\s*(and|&|vs)\s*con(s)?|alternative|comparison)\b/i, category: "architecture/tradeoff", weight: 0.7 },
-  { pattern: /\b(ADR|architecture\s*decision|decided\s*to\s*use|chose|went\s*with)\b/i, category: "architecture/decision", weight: 0.7 },
-
-  // Feature
-  { pattern: /\b(requirement|spec(ification)?|user\s*story|acceptance\s*criteria)\b/i, category: "feature/requirement", weight: 0.7 },
-  { pattern: /\b(feature|add(ing)?|new\s+functionality|enhancement)\b/i, category: "feature/implementation", weight: 0.5 },
-  { pattern: /\b(design|wireframe|mockup|ux|ui\s*design)\b/i, category: "feature/design", weight: 0.6 },
-
-  // Project
-  { pattern: /\b(setup|scaffold|bootstrap|init(ialize)?|getting\s*started)\b/i, category: "project/setup", weight: 0.7 },
-  { pattern: /\b(config(uration)?|\.env|settings|yaml|toml|\.json)\b/i, category: "project/config", weight: 0.6 },
-  { pattern: /\b(depend(ency|encies)|package|npm|bun\s*install|yarn|pnpm|version)\b/i, category: "project/dependency", weight: 0.7 },
-
-  // Decision
-  { pattern: /\b(should\s*we|decision|decided|let'?s\s*(go|use)|approach)\b/i, category: "decision/technical", weight: 0.6 },
-  { pattern: /\b(process|workflow|methodology|agile|sprint|convention)\b/i, category: "decision/process", weight: 0.6 },
-  { pattern: /\b(tool(ing)?|ide|editor|framework|library\s*choice)\b/i, category: "decision/tooling", weight: 0.6 },
-
-  // Topic
-  { pattern: /\b(learn(ing)?|tutorial|guide|how\s*to|explain|what\s*is)\b/i, category: "topic/learning", weight: 0.5 },
-  { pattern: /\b(explain(ation)?|deep\s*dive|understand(ing)?|concept)\b/i, category: "topic/explanation", weight: 0.6 },
-  { pattern: /\b(compar(e|ing|ison)|vs\.?|versus|benchmark|which\s*is\s*better)\b/i, category: "topic/comparison", weight: 0.7 },
-];
-
 /**
- * Classify text using keyword rules.
+ * Classify text using loaded YAML rules.
  * Returns all matches sorted by confidence (weight * match density).
  */
-export function classifyByRules(text: string): ClassifyResult[] {
+export function classifyByRules(text: string, rules: Rule[]): ClassifyResult[] {
   const results: ClassifyResult[] = [];
   const textLower = text.toLowerCase();
   const wordCount = textLower.split(/\s+/).length;
+  const ruleManager = getRuleManager();
 
-  for (const rule of RULES) {
-    const matches = textLower.match(new RegExp(rule.pattern, "gi"));
+  for (const rule of rules) {
+    const pattern = ruleManager.compilePattern(rule);
+    const matches = textLower.match(pattern);
     if (matches) {
       // Density: how many keyword matches relative to text length
       const density = Math.min(matches.length / Math.max(wordCount / 10, 1), 1);
@@ -161,16 +121,26 @@ ${text.slice(0, 2000)}`;
  */
 export async function classifyMessage(
   text: string,
-  useLLM: boolean = false
+  options: {
+    useLLM?: boolean;
+    rules?: Rule[];
+  } = {}
 ): Promise<ClassifyResult | null> {
-  const ruleResults = classifyByRules(text);
+  // Load rules if not provided
+  let rules = options.rules;
+  if (!rules) {
+    const ruleManager = getRuleManager();
+    rules = await ruleManager.loadRules({ language: "general" });
+  }
+
+  const ruleResults = classifyByRules(text, rules);
 
   if (ruleResults.length > 0 && ruleResults[0].confidence >= CLASSIFY_LLM_THRESHOLD) {
     return ruleResults[0];
   }
 
   // If rule-based is weak and LLM is enabled, try LLM
-  if (useLLM) {
+  if (options.useLLM) {
     const llmResult = await classifyByLLM(text);
     if (llmResult) return llmResult;
   }
@@ -188,6 +158,8 @@ export async function categorizeUncategorized(
     useLLM?: boolean;
     onProgress?: (msg: string) => void;
     sessionId?: string;
+    language?: string;
+    framework?: string;
   } = {}
 ): Promise<{ categorized: number; skipped: number }> {
   let query: string;
@@ -223,6 +195,13 @@ export async function categorizeUncategorized(
     content: string;
   }>;
 
+  // Load rules once for all messages
+  const ruleManager = getRuleManager();
+  const rules = await ruleManager.loadRules({
+    language: options.language || "general",
+    framework: options.framework,
+  });
+
   let categorized = 0;
   let skipped = 0;
 
@@ -230,7 +209,7 @@ export async function categorizeUncategorized(
   const sessionCategories = new Map<string, Map<string, number>>();
 
   for (const msg of messages) {
-    const result = await classifyMessage(msg.content, options.useLLM);
+    const result = await classifyMessage(msg.content, { useLLM: options.useLLM, rules });
     if (result) {
       tagMessage(db, msg.id, result.categoryId, result.confidence, result.source);
       categorized++;

@@ -102,7 +102,7 @@ export function gatherContext(
   // Recent sessions
   const sessions = db
     .prepare(
-      `SELECT ms.id, ms.title, ms.updated_at, sc.turn_count,
+      `SELECT ms.id, ms.title, ms.updated_at, SUM(sc.turn_count) AS turn_count,
               COALESCE(GROUP_CONCAT(DISTINCT st.category_id), '') AS categories
        FROM memory_sessions ms
        JOIN smriti_session_meta sm ON sm.session_id = ms.id
@@ -633,7 +633,8 @@ export function gatherSessionMetrics(
   // Costs
   const costs = db
     .prepare(
-      `SELECT turn_count, total_input_tokens, total_output_tokens, total_duration_ms
+      `SELECT SUM(turn_count) AS turn_count, SUM(total_input_tokens) AS total_input_tokens,
+              SUM(total_output_tokens) AS total_output_tokens, SUM(total_duration_ms) AS total_duration_ms
        FROM smriti_session_costs WHERE session_id = ?`
     )
     .get(sessionId) as {

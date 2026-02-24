@@ -1,0 +1,3 @@
+[submodule "qmd"]
+	path = qmd
+	url = https://github.com/zero8dotdev/qmd.git

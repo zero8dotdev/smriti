@@ -1,0 +1,143 @@
+version: "1.0.0"
+language: general
+description: "General-purpose rules applicable across all languages and frameworks"
+
+rules:
+  # Bug-related
+  - id: general-bug-report
+    pattern: '\b(bug|error|crash|exception|traceback|stack\s*trace|segfault)\b'
+    category: bug/report
+    weight: 0.8
+    description: "Identifies bug reports and error occurrences"
+
+  - id: general-bug-fix
+    pattern: '\b(fix(ed|ing)?|patch(ed|ing)?|resolve[ds]?|hotfix)\b'
+    category: bug/fix
+    weight: 0.7
+    description: "Identifies bug fixes and patches"
+
+  - id: general-bug-investigation
+    pattern: '\b(debug(ging)?|investigat(e|ing)|diagnos(e|ing)|root\s*cause)\b'
+    category: bug/investigation
+    weight: 0.7
+    description: "Identifies debugging and root cause investigation"
+
+  # Code patterns
+  - id: general-code-pattern
+    pattern: '\b(refactor(ing)?|clean\s*up|pattern|idiom|best\s*practice)\b'
+    category: code/pattern
+    weight: 0.7
+    description: "Identifies code patterns and best practices"
+
+  - id: general-code-implementation
+    pattern: '\b(implement(ation|ed|ing)?|code|function|class|method|module)\b'
+    category: code/implementation
+    weight: 0.5
+    description: "Identifies code implementation discussions"
+
+  - id: general-code-review
+    pattern: '\b(review|pr|pull\s*request|code\s*review|feedback)\b'
+    category: code/review
+    weight: 0.6
+    description: "Identifies code review discussions"
+
+  - id: general-code-snippet
+    pattern: '\b(snippet|example|sample|boilerplate|template)\b'
+    category: code/snippet
+    weight: 0.6
+    description: "Identifies code snippets and examples"
+
+  # Architecture
+  - id: general-architecture-design
+    pattern: '\b(architect(ure)?|system\s*design|high[\s-]?level|diagram|component)\b'
+    category: architecture/design
+    weight: 0.7
+    description: "Identifies architecture and system design discussions"
+
+  - id: general-architecture-tradeoff
+    pattern: '\b(trade[\s-]?off|pro(s)?\s*(and|&|vs)\s*con(s)?|alternative|comparison)\b'
+    category: architecture/tradeoff
+    weight: 0.7
+    description: "Identifies architecture tradeoff discussions"
+
+  - id: general-architecture-decision
+    pattern: '\b(ADR|architecture\s*decision|decided\s*to\s*use|chose|went\s*with)\b'
+    category: architecture/decision
+    weight: 0.7
+    description: "Identifies architecture decisions"
+
+  # Feature
+  - id: general-feature-requirement
+    pattern: '\b(requirement|spec(ification)?|user\s*story|acceptance\s*criteria)\b'
+    category: feature/requirement
+    weight: 0.7
+    description: "Identifies feature requirements and specifications"
+
+  - id: general-feature-implementation
+    pattern: '\b(feature|add(ing)?|new\s+functionality|enhancement)\b'
+    category: feature/implementation
+    weight: 0.5
+    description: "Identifies feature implementation discussions"
+
+  - id: general-feature-design
+    pattern: '\b(design|wireframe|mockup|ux|ui\s*design)\b'
+    category: feature/design
+    weight: 0.6
+    description: "Identifies feature design discussions"
+
+  # Project
+  - id: general-project-setup
+    pattern: '\b(setup|scaffold|bootstrap|init(ialize)?|getting\s*started)\b'
+    category: project/setup
+    weight: 0.7
+    description: "Identifies project setup and initialization"
+
+  - id: general-project-config
+    pattern: '\b(config(uration)?|\.env|settings|yaml|toml|\.json)\b'
+    category: project/config
+    weight: 0.6
+    description: "Identifies configuration discussions"
+
+  - id: general-project-dependency
+    pattern: '\b(depend(ency|encies)|package|npm|bun\s*install|yarn|pnpm|version)\b'
+    category: project/dependency
+    weight: 0.7
+    description: "Identifies dependency and package management discussions"
+
+  # Decision
+  - id: general-decision-technical
+    pattern: '\b(should\s*we|decision|decided|let.?s\s*(go|use)|approach)\b'
+    category: decision/technical
+    weight: 0.6
+    description: "Identifies technical decisions"
+
+  - id: general-decision-process
+    pattern: '\b(process|workflow|methodology|agile|sprint|convention)\b'
+    category: decision/process
+    weight: 0.6
+    description: "Identifies process decisions"
+
+  - id: general-decision-tooling
+    pattern: '\b(tool(ing)?|ide|editor|framework|library\s*choice)\b'
+    category: decision/tooling
+    weight: 0.6
+    description: "Identifies tooling decisions"
+
+  # Topic
+  - id: general-topic-learning
+    pattern: '\b(learn(ing)?|tutorial|guide|how\s*to|explain|what\s*is)\b'
+    category: topic/learning
+    weight: 0.5
+    description: "Identifies learning and tutorial topics"
+
+  - id: general-topic-explanation
+    pattern: '\b(explain(ation)?|deep\s*dive|understand(ing)?|concept)\b'
+    category: topic/explanation
+    weight: 0.6
+    description: "Identifies explanation and deep-dive topics"
+
+  - id: general-topic-comparison
+    pattern: '\b(compar(e|ing|ison)|vs\.?|versus|benchmark|which\s*is\s*better)\b'
+    category: topic/comparison
+    weight: 0.7
+    description: "Identifies comparison topics"

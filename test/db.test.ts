@@ -1,5 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { Database } from "bun:sqlite";
+import { initializeMemoryTables } from "../src/qmd";
 import {
   initializeSmritiTables,
   seedDefaults,
@@ -20,29 +21,10 @@ beforeAll(() => {
   db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
 
-  // Create minimal QMD tables that Smriti depends on
-  db.exec(`
-    CREATE TABLE memory_sessions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      summary TEXT,
-      summary_at TEXT,
-      active INTEGER NOT NULL DEFAULT 1
-    );
-    CREATE TABLE memory_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      metadata TEXT,
-      FOREIGN KEY (session_id) REFERENCES memory_sessions(id) ON DELETE CASCADE
-    );
-  `);
+  // Create core QMD tables
+  initializeMemoryTables(db);
 
+  // Create Smriti-specific tables
   initializeSmritiTables(db);
   seedDefaults(db);
 });
