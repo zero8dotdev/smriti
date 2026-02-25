@@ -18,6 +18,58 @@ import { initializeMemoryTables } from "./qmd";
 
 let _db: Database | null = null;
 
+/** Initialize QMD store tables (content, documents, vectors, etc) */
+function initializeQmdStore(db: Database): void {
+  // Load sqlite-vec extension
+  sqliteVec.load(db);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
+
+  // Create content-addressable storage
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS content (
+      hash TEXT PRIMARY KEY,
+      doc TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  // Documents table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      collection TEXT NOT NULL,
+      path TEXT NOT NULL,
+      title TEXT NOT NULL,
+      hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      modified_at TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY (hash) REFERENCES content(hash) ON DELETE CASCADE,
+      UNIQUE(collection, path)
+    )
+  `);
+
+  // Content vectors - required for vector search
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS content_vectors (
+      hash TEXT NOT NULL,
+      seq INTEGER NOT NULL DEFAULT 0,
+      pos INTEGER NOT NULL DEFAULT 0,
+      model TEXT NOT NULL,
+      embedded_at TEXT NOT NULL,
+      PRIMARY KEY (hash, seq)
+    )
+  `);
+
+  // Create virtual vec table for sqlite-vec
+  try {
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vectors_vec USING vec0(embedding float[1536])`);
+  } catch {
+    // May fail if model doesn't support this dimension, that's OK
+  }
+}
+
 /** Get or create the shared database connection */
 export function getDb(path?: string): Database {
   if (_db) return _db;
@@ -32,10 +84,9 @@ export function getDb(path?: string): Database {
     }
   }
   _db = new Database(dbPath);
-  _db.exec("PRAGMA journal_mode = WAL");
-  _db.exec("PRAGMA foreign_keys = ON");
-  // Load sqlite-vec extension for vector search support
-  sqliteVec.load(_db);
+  initializeQmdStore(_db);
+  // Also initialize QMD memory tables (sessions, messages)
+  initializeMemoryTables(_db);
   return _db;
 }
 
@@ -438,7 +489,8 @@ export function seedDefaults(db: Database): void {
 /** Initialize DB, create tables, seed defaults. Returns the DB instance. */
 export function initSmriti(dbPath?: string): Database {
   const db = getDb(dbPath);
-  initializeMemoryTables(db);
+  // getDb() now calls createStore() which initializes QMD tables,
+  // so we just need to initialize Smriti tables
   initializeSmritiTables(db);
   seedDefaults(db);
   return db;
