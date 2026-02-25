@@ -76,12 +76,26 @@ $shimPath = Join-Path $BIN_DIR "smriti.cmd"
 Set-Content -Path $shimPath -Encoding ASCII -Value "@echo off`r`nbun `"$SMRITI_HOME\src\index.ts`" %*"
 Ok "smriti.cmd -> $BIN_DIR"
 
-# Add BIN_DIR to user PATH
+# Add BIN_DIR to user PATH (persists across sessions)
 $userPath = [System.Environment]::GetEnvironmentVariable("PATH","User")
 if ($userPath -notlike "*$BIN_DIR*") {
   [System.Environment]::SetEnvironmentVariable("PATH","$userPath;$BIN_DIR","User")
+  Ok "Added $BIN_DIR to PATH (User registry)"
+}
+
+# Also update current session PATH (critical for CI)
+$env:PATH = "$BIN_DIR;$env:PATH"
+if ($env:PATH -notlike "*$BIN_DIR*") {
   $env:PATH += ";$BIN_DIR"
-  Ok "Added $BIN_DIR to PATH"
+}
+
+# Verify smriti is accessible (especially important for CI)
+if (Get-Command smriti -ErrorAction SilentlyContinue) {
+  $version = smriti --version 2>&1 | Select-Object -First 1
+  Ok "smriti binary verified: $version"
+} else {
+  Warn "smriti command not found (this can be normal in CI environments)"
+  Warn "Try: `$env:PATH = '$BIN_DIR;`$env:PATH'"
 }
 
 # ─── Claude Code hook (skip in CI) ───────────────────────────────────────────
