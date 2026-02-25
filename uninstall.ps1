@@ -11,10 +11,8 @@ param([switch]$CI)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-if ($CI) {
-  $HOME_DIR = Join-Path ([System.IO.Path]::GetTempPath()) "smriti-ci-home"
-  $env:USERPROFILE = $HOME_DIR
-}
+# Note: CI flag is accepted for compatibility but temp HOME is no longer used
+# (runner HOME is cleaned up automatically after job)
 
 $SMRITI_HOME  = Join-Path $env:USERPROFILE ".smriti"
 $BIN_DIR      = Join-Path $env:USERPROFILE ".local\bin"
