@@ -30,7 +30,7 @@ All notable changes to smriti are documented here. Format:
 
 ### 📖 The Monitoring Loop: A CI Debugging Story
 
-**The Problem (2026-02-25, 15:02 UTC):**
+**The Problem (2026-02-25, 20:32 IST):**
 Fresh CI runners were crashing with cryptic database errors. The PR was green locally
 but red everywhere else. We needed fast feedback on each fix attempt.
 
@@ -52,23 +52,23 @@ for i in {1..60}; do
 done
 ```
 
-**The Cycle (Compressed Timeline):**
+**The Cycle (Compressed Timeline — IST):**
 
-1. **15:02** — PR merged, Install Test triggered
-2. **15:10** — Monitor script: "Error: unable to open database file" ❌
+1. **20:32** — PR merged, Install Test triggered
+2. **20:40** — Monitor script: "Error: unable to open database file" ❌
    - Fix: Add `mkdirSync()` to create `~/.cache/qmd`
    - Commit & push
-3. **15:12** — New run starts, monitor script watching...
-4. **15:13** — Monitor script: "Error: no such table: content_vectors" ❌
+3. **20:42** — New run starts, monitor script watching...
+4. **20:43** — Monitor script: "Error: no such table: content_vectors" ❌
    - Root cause hunt: "What tables exist? Why not content_vectors?"
    - Discovery: QMD's `initializeDatabase()` was never called
    - Fix: Add `initializeQmdStore()` with all required tables
    - Commit & push
-5. **15:20** — Another run, monitor script: "Error: ENOENT...ingest claude" ❌
+5. **20:50** — Another run, monitor script: "Error: ENOENT...ingest claude" ❌
    - Root cause: Workflow has `continue-on-error: false` on optional step
    - Fix: Change to `continue-on-error: true`
    - Commit & push
-6. **15:37** — **MONITOR SHOWS: ✅ ALL PLATFORMS PASS** 🎉
+6. **21:07** — **MONITOR SHOWS: ✅ ALL PLATFORMS PASS** 🎉
    - Ubuntu: ✅ (20 seconds)
    - macOS: ✅ (21 seconds)
    - Windows: ✅ (82 seconds)
@@ -89,7 +89,7 @@ done
 
 The monitoring script transformed debugging from "wait for CI to finish, read logs
 later" to "watch it fail in real-time, understand why immediately, fix in next
-iteration." By 15:37 UTC, three separate bugs were identified and fixed in under
+iteration." By 21:07 IST, three separate bugs were identified and fixed in under
 40 minutes.
 
 **Lessons Learned:**
