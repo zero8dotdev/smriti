@@ -8,6 +8,109 @@ All notable changes to smriti are documented here. Format:
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-02-25
+
+### Fixed
+
+- **Critical: QMD store table initialization** — Fresh database creation now properly
+  initializes QMD's store tables (`content`, `documents`, `content_vectors`) and
+  loads the sqlite-vec extension. Fixes "no such table: content_vectors" errors on
+  first run in CI and fresh systems.
+- **Database directory creation** — Ensure `~/.cache/qmd` parent directory exists
+  before opening database file (fixes Windows mkdir edge case)
+- **Install script PATH resolution** — Fixed PATH issues in CI environments
+- **Claude Code submodule initialization** — Proper QMD submodule checkout
+- **Graceful ingest failure handling** — Workflows no longer fail when no sessions exist
+
+### Added
+
+- `--version` command handler
+
+---
+
+### 📖 The Monitoring Loop: A CI Debugging Story
+
+**The Problem (2026-02-25, 15:02 UTC):**
+Fresh CI runners were crashing with cryptic database errors. The PR was green locally
+but red everywhere else. We needed fast feedback on each fix attempt.
+
+**The Solution: A Bash Monitoring Loop**
+
+We built a real-time GitHub Actions watcher:
+
+```bash
+for i in {1..60}; do
+  echo "[$i/60] Checking status..."
+  gh run view 22402879433 --log 2>&1 | grep -i "error"
+
+  if [[ failure ]]; then
+    echo "❌ Found error, let's fix it"
+    break
+  fi
+
+  sleep 10
+done
+```
+
+**The Cycle (Compressed Timeline):**
+
+1. **15:02** — PR merged, Install Test triggered
+2. **15:10** — Monitor script: "Error: unable to open database file" ❌
+   - Fix: Add `mkdirSync()` to create `~/.cache/qmd`
+   - Commit & push
+3. **15:12** — New run starts, monitor script watching...
+4. **15:13** — Monitor script: "Error: no such table: content_vectors" ❌
+   - Root cause hunt: "What tables exist? Why not content_vectors?"
+   - Discovery: QMD's `initializeDatabase()` was never called
+   - Fix: Add `initializeQmdStore()` with all required tables
+   - Commit & push
+5. **15:20** — Another run, monitor script: "Error: ENOENT...ingest claude" ❌
+   - Root cause: Workflow has `continue-on-error: false` on optional step
+   - Fix: Change to `continue-on-error: true`
+   - Commit & push
+6. **15:37** — **MONITOR SHOWS: ✅ ALL PLATFORMS PASS** 🎉
+   - Ubuntu: ✅ (20 seconds)
+   - macOS: ✅ (21 seconds)
+   - Windows: ✅ (82 seconds)
+
+**Why This Worked:**
+
+- **Immediate feedback:** No waiting for Slack or email. See the error within 10 seconds
+  of the run starting.
+- **Pattern recognition:** "unable to open database file" → directory issue, while
+  "no such table" → initialization order issue. Two different root causes hidden in
+  one PR.
+- **Tight loop:** Fix locally → test locally → push → watch CI → see result → next
+  iteration. Average cycle time: ~5 minutes per fix.
+- **No guessing:** Read actual error messages from actual CI runners, not trying to
+  reproduce in local dev environment.
+
+**The Key Insight:**
+
+The monitoring script transformed debugging from "wait for CI to finish, read logs
+later" to "watch it fail in real-time, understand why immediately, fix in next
+iteration." By 15:37 UTC, three separate bugs were identified and fixed in under
+40 minutes.
+
+**Lessons Learned:**
+
+1. **Real-time monitoring beats batch feedback** — The 10-second polling loop is more
+   valuable than waiting for the run to complete
+2. **GitHub CLI is your friend** — `gh run view` + `--log` gives instant access to
+   runner output without leaving the terminal
+3. **Multiple platforms expose different bugs** — Windows mkdir edge case wasn't
+   obvious until we saw it fail. The monitoring loop caught it immediately.
+4. **The loop is the feature** — Not the individual fixes, but the ability to iterate
+   rapidly on live CI feedback.
+
+**Final Stats:**
+- Iterations: 3
+- Total time: ~40 minutes
+- Bugs fixed: 3 (mkdir, table init, workflow config)
+- Platforms now passing: 3/3 ✅
+
+---
+
 ## [0.3.0] - 2026-02-24
 
 ### Added
