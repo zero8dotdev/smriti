@@ -26,10 +26,7 @@ $ErrorActionPreference = "Stop"
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 if ($CI) {
-  $HOME_DIR     = Join-Path ([System.IO.Path]::GetTempPath()) "smriti-ci-home"
-  $null         = New-Item -ItemType Directory -Force -Path $HOME_DIR
-  $env:USERPROFILE = $HOME_DIR
-  Write-Host "CI mode: using temp HOME $HOME_DIR"
+  Write-Host "CI mode: running in non-interactive mode"
 }
 
 $SMRITI_HOME  = Join-Path $env:USERPROFILE ".smriti"
