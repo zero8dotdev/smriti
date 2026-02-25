@@ -149,6 +149,13 @@ async function main() {
     return;
   }
 
+  // Handle --version early (doesn't need DB)
+  if (command === "--version" || command === "-v") {
+    const pkg = require("../package.json");
+    console.log(`smriti ${pkg.version}`);
+    return;
+  }
+
   // Initialize DB
   const db = initSmriti();
 
