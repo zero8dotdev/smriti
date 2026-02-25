@@ -12,16 +12,15 @@
 set -euo pipefail
 
 # --- CI mode (used by GitHub Actions install-test.yml) -----------------------
-# Pass --ci to run non-interactively with a temp HOME directory.
+# Pass --ci to run non-interactively. Sets SMRITI_NO_HOOK to skip Claude Code hook.
 CI_MODE=0
 for arg in "$@"; do
   [ "$arg" = "--ci" ] && CI_MODE=1
 done
 
 if [ "$CI_MODE" = "1" ]; then
-  export HOME="$(mktemp -d /tmp/smriti-ci-XXXXX)"
   export SMRITI_NO_HOOK=1
-  echo "CI mode: using temp HOME $HOME"
+  echo "CI mode: skipping Claude Code hook setup"
 fi
 
 # --- Configuration -----------------------------------------------------------
