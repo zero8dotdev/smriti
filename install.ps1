@@ -63,9 +63,13 @@ if (Test-Path (Join-Path $SMRITI_HOME ".git")) {
   Push-Location $SMRITI_HOME; git pull --quiet; Pop-Location
   Ok "Updated"
 } else {
-  git clone --quiet $REPO_URL $SMRITI_HOME
+  git clone --quiet --recurse-submodules $REPO_URL $SMRITI_HOME
   Ok "Cloned"
 }
+# Ensure submodules are initialized (critical for QMD dependency)
+Push-Location $SMRITI_HOME
+git submodule update --init --recursive 2>&1 | Out-Null
+Pop-Location
 Push-Location $SMRITI_HOME; bun install --silent; Pop-Location
 Ok "Dependencies installed"
 
