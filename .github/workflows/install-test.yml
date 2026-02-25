@@ -30,10 +30,28 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache Bun
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.bun
+            ${{ env.BUN_INSTALL }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: Cache QMD Database
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/qmd
+          key: ${{ runner.os }}-qmd-db
+          restore-keys: |
+            ${{ runner.os }}-qmd-
 
       - name: Run installer
         run: ${{ matrix.install_cmd }}

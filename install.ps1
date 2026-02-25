@@ -67,7 +67,10 @@ if (Test-Path (Join-Path $SMRITI_HOME ".git")) {
 Push-Location $SMRITI_HOME
 git submodule update --init --recursive 2>&1 | Out-Null
 Pop-Location
-Push-Location $SMRITI_HOME; bun install --silent; Pop-Location
+Push-Location $SMRITI_HOME
+# Use frozen-lockfile for faster cached installs, fallback to regular install
+bun install --frozen-lockfile --silent 2>$null || bun install --silent
+Pop-Location
 Ok "Dependencies installed"
 
 # ─── smriti.cmd shim ─────────────────────────────────────────────────────────

@@ -90,7 +90,8 @@ git submodule update --init --recursive 2>/dev/null || true
 # --- Install dependencies ----------------------------------------------------
 
 info "Installing dependencies..."
-bun install --frozen-lockfile 2>/dev/null || bun install
+# Use frozen-lockfile if available (faster in CI with caching), fallback to regular install
+bun install --frozen-lockfile 2>/dev/null || bun install --no-progress
 
 # --- Create binary wrapper ----------------------------------------------------
 
