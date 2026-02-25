@@ -101,14 +101,24 @@ exec bun "$SMRITI_DIR/src/index.ts" "\$@"
 WRAPPER
 chmod +x "$SMRITI_BIN_DIR/smriti"
 
-# Check if bin dir is in PATH
-if ! echo "$PATH" | tr ':' '\n' | grep -q "^${SMRITI_BIN_DIR}$"; then
-  warn "$SMRITI_BIN_DIR is not in your PATH."
-  echo ""
-  echo "  Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-  echo ""
-  echo "    export PATH=\"$SMRITI_BIN_DIR:\$PATH\""
-  echo ""
+# Add bin dir to PATH for current session
+export PATH="$SMRITI_BIN_DIR:$PATH"
+
+# Also persist to shell profiles for future sessions
+for SHELL_RC in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.profile"; do
+  if [ -f "$SHELL_RC" ]; then
+    if ! grep -q "export PATH=.*SMRITI_BIN_DIR\|$SMRITI_BIN_DIR" "$SHELL_RC" 2>/dev/null; then
+      echo "export PATH=\"$SMRITI_BIN_DIR:\$PATH\"" >> "$SHELL_RC"
+    fi
+  fi
+done
+
+# Verify smriti is accessible (especially important for CI)
+if command_exists smriti; then
+  ok "smriti binary verified: $(smriti --version 2>/dev/null | head -1)"
+else
+  warn "smriti command not found in PATH (this can be normal in CI environments)"
+  warn "Try running: export PATH=\"$SMRITI_BIN_DIR:\$PATH\""
 fi
 
 # --- Claude Code hook setup --------------------------------------------------
