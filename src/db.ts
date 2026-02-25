@@ -7,6 +7,8 @@
 
 import { Database } from "bun:sqlite";
 import * as sqliteVec from "sqlite-vec";
+import { mkdirSync } from "fs";
+import { dirname } from "path";
 import { QMD_DB_PATH } from "./config";
 import { initializeMemoryTables } from "./qmd";
 
@@ -19,7 +21,11 @@ let _db: Database | null = null;
 /** Get or create the shared database connection */
 export function getDb(path?: string): Database {
   if (_db) return _db;
-  _db = new Database(path || QMD_DB_PATH);
+  const dbPath = path || QMD_DB_PATH;
+  // Ensure parent directory exists before creating database file
+  const dbDir = dirname(dbPath);
+  mkdirSync(dbDir, { recursive: true });
+  _db = new Database(dbPath);
   _db.exec("PRAGMA journal_mode = WAL");
   _db.exec("PRAGMA foreign_keys = ON");
   // Load sqlite-vec extension for vector search support
