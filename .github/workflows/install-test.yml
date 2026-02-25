@@ -30,6 +30,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache Bun binary
+        uses: actions/cache@v3
+        with:
+          path: ~/.bun
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: ${{ runner.os }}-bun-
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
