@@ -24,7 +24,13 @@ export function getDb(path?: string): Database {
   const dbPath = path || QMD_DB_PATH;
   // Ensure parent directory exists before creating database file
   const dbDir = dirname(dbPath);
-  mkdirSync(dbDir, { recursive: true });
+  if (dbDir !== ".") {
+    try {
+      mkdirSync(dbDir, { recursive: true });
+    } catch {
+      // Directory might already exist or be inaccessible (unlikely in normal cases)
+    }
+  }
   _db = new Database(dbPath);
   _db.exec("PRAGMA journal_mode = WAL");
   _db.exec("PRAGMA foreign_keys = ON");
