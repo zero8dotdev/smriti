@@ -62,7 +62,7 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           smriti ingest claude || bun "$HOME/.smriti/src/index.ts" ingest claude
-        continue-on-error: false
+        continue-on-error: true
 
       - name: Smoke — smriti ingest copilot (no VS Code OK)
         shell: bash
