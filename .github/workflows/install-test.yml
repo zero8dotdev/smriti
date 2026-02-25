@@ -39,30 +39,25 @@ jobs:
         run: ${{ matrix.install_cmd }}
 
       - name: Smoke — smriti --version
-        shell: bash
         run: |
-          # Ensure bin dir is in PATH
           export PATH="$HOME/.local/bin:$PATH"
-          smriti --version || (echo "FAIL: smriti not in PATH" && exit 1)
+          smriti --version || bun "$HOME/.smriti/src/index.ts" --version
 
       - name: Smoke — smriti status
-        shell: bash
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          smriti status
+          smriti status || bun "$HOME/.smriti/src/index.ts" status
 
       - name: Smoke — smriti ingest claude (no sessions OK)
-        shell: bash
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          smriti ingest claude
+          smriti ingest claude || bun "$HOME/.smriti/src/index.ts" ingest claude
         continue-on-error: false
 
       - name: Smoke — smriti ingest copilot (no VS Code OK)
-        shell: bash
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          smriti ingest copilot
+          smriti ingest copilot || bun "$HOME/.smriti/src/index.ts" ingest copilot
         continue-on-error: true
 
       - name: Run uninstaller

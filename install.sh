@@ -76,14 +76,17 @@ if [ -d "$SMRITI_DIR" ]; then
     warn "Could not fast-forward. Reinstalling fresh..."
     cd /
     rm -rf "$SMRITI_DIR"
-    git clone --depth 1 "$REPO" "$SMRITI_DIR"
+    git clone --depth 1 --recurse-submodules "$REPO" "$SMRITI_DIR"
     cd "$SMRITI_DIR"
   }
 else
   info "Cloning Smriti to $SMRITI_DIR..."
-  git clone --depth 1 "$REPO" "$SMRITI_DIR"
+  git clone --depth 1 --recurse-submodules "$REPO" "$SMRITI_DIR"
   cd "$SMRITI_DIR"
 fi
+
+# Ensure submodules are initialized (critical for QMD dependency)
+git submodule update --init --recursive 2>/dev/null || true
 
 # --- Install dependencies ----------------------------------------------------
 
