@@ -1,16 +1,17 @@
 /**
- * cline.ts - Cline CLI conversation parser (enriched)
+ * cline.ts - Cline CLI conversation parser (pure function)
  *
  * Reads JSON task files from ~/.cline/tasks and produces
- * StructuredMessage objects with full block extraction, then stores
- * via QMD's addMessage() with sidecar table population.
+ * StructuredMessage objects with full block extraction.
+ *
+ * NO DATABASE CALLS — returns ParsedSession for orchestrator to handle persistence.
  */
 
 import { existsSync } from "fs";
 import { basename, join } from "path";
 import { CLINE_LOGS_DIR, PROJECTS_ROOT } from "../config";
 import { addMessage } from "../qmd";
-import type { StructuredMessage, MessageMetadata } from "./types";
+import type { StructuredMessage, MessageMetadata, ParsedSession } from "./types";
 import type { IngestResult, IngestOptions } from "./index";
 import type { MessageBlock } from "./types";
 import {
@@ -269,11 +270,58 @@ export async function discoverClineSessions(
 }
 
 // =============================================================================
-// Ingestion (enriched)
+// Pure Parser (NO database calls)
+// =============================================================================
+
+/**
+ * Parse a single Cline task into a ParsedSession.
+ * Pure function — no database knowledge.
+ */
+export async function parseCliineSession(
+  sessionId: string,
+  filePath: string
+): Promise<ParsedSession> {
+  const file = Bun.file(filePath);
+  const content = await file.text();
+  const task: ClineTask = JSON.parse(content);
+  const messages = parseClineTask(task, 0);
+
+  const title = task.name || messages[0]?.plainText.slice(0, 100).replace(/\n/g, " ") || sessionId;
+
+  // Aggregate duration from system events
+  let totalDurationMs = 0;
+  for (const msg of messages) {
+    for (const block of msg.blocks) {
+      if (
+        block.type === "system_event" &&
+        block.eventType === "turn_duration" &&
+        typeof block.data.durationMs === "number"
+      ) {
+        totalDurationMs += block.data.durationMs;
+      }
+    }
+  }
+
+  return {
+    session: {
+      id: sessionId,
+      title,
+      created_at: messages[0]?.timestamp || new Date().toISOString(),
+    },
+    messages,
+    metadata: {
+      total_duration_ms: totalDurationMs || undefined,
+    },
+  };
+}
+
+// =============================================================================
+// Ingestion (orchestrator — temporary wrapper for backward compatibility)
 // =============================================================================
 
 /**
  * Ingest Cline CLI task sessions into QMD's memory with structured block extraction.
+ * TEMPORARY: This will be removed in Phase 4 when orchestrator is refactored.
  */
 export async function ingestCline(
   options: IngestOptions = {}
@@ -309,33 +357,28 @@ export async function ingestCline(
     }
 
     try {
-      const file = Bun.file(session.filePath);
-      const content = await file.text();
-      const task: ClineTask = JSON.parse(content);
-      const structuredMessages = parseClineTask(task, 0); // Start sequence from 0
+      // Use pure parser
+      const parsed = await parseCliineSession(session.sessionId, session.filePath);
 
-      if (structuredMessages.length === 0) {
+      if (parsed.messages.length === 0) {
         result.skipped++;
         continue;
       }
 
       // Derive project info using the task's CWD
-      const projectId = deriveProjectId(task.cwd || "");
-      const projectPath = deriveProjectPath(task.cwd || "");
+      const projectId = deriveProjectId(session.projectDir);
+      const projectPath = deriveProjectPath(session.projectDir);
       upsertProject(db, projectId, projectPath);
 
-      // Use task name or first message as title
-      const title = task.name || structuredMessages[0].plainText.slice(0, 100).replace(/\n/g, " ");
-
       // Process each structured message
-      for (const msg of structuredMessages) {
+      for (const msg of parsed.messages) {
         const stored = await addMessage(
           db,
           session.sessionId,
           msg.role,
           msg.plainText || "(structured content)",
           {
-            title,
+            title: parsed.session.title,
             metadata: {
               ...msg.metadata,
               blocks: msg.blocks,
@@ -356,7 +399,7 @@ export async function ingestCline(
                 session.sessionId,
                 block.toolName,
                 block.description || summarizeToolInput(block.toolName, block.input),
-                true, // success assumed; updated by tool_result if paired
+                true,
                 null,
                 createdAt
               );
@@ -449,7 +492,7 @@ export async function ingestCline(
       upsertSessionMeta(db, session.sessionId, "cline", projectId);
 
       result.sessionsIngested++;
-      result.messagesIngested += structuredMessages.length;
+      result.messagesIngested += parsed.messages.length;
 
       if (onProgress) {
         onProgress(

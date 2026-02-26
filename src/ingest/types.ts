@@ -208,6 +208,23 @@ export type StructuredMessage = {
 };
 
 // =============================================================================
+// Parsed Session (output from pure parsers)
+// =============================================================================
+
+export type ParsedSession = {
+  session: {
+    id: string;
+    title: string;
+    created_at: string;
+  };
+  messages: StructuredMessage[];
+  metadata?: {
+    total_tokens?: number;
+    total_duration_ms?: number;
+  };
+};
+
+// =============================================================================
 // Legacy compat — ParsedMessage is still used by Codex/Cursor/Generic parsers
 // =============================================================================
 

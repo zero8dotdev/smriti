@@ -1,16 +1,17 @@
 /**
- * claude.ts - Claude Code conversation parser (enriched)
+ * claude.ts - Claude Code conversation parser (pure function)
  *
  * Reads JSONL transcripts from ~/.claude/projects/ and produces
- * StructuredMessage objects with full block extraction, then stores
- * via QMD's addMessage() with sidecar table population.
+ * StructuredMessage objects with full block extraction.
+ *
+ * NO DATABASE CALLS — returns ParsedSession for orchestrator to handle persistence.
  */
 
 import { existsSync } from "fs";
 import { basename } from "path";
 import { CLAUDE_LOGS_DIR, PROJECTS_ROOT } from "../config";
 import { addMessage } from "../qmd";
-import type { ParsedMessage, StructuredMessage, MessageMetadata } from "./types";
+import type { ParsedMessage, StructuredMessage, MessageMetadata, ParsedSession } from "./types";
 import type { IngestResult, IngestOptions } from "./index";
 import type { MessageBlock } from "./types";
 import {
@@ -379,11 +380,72 @@ export async function discoverClaudeSessions(
 }
 
 // =============================================================================
-// Ingestion (enriched)
+// Pure Parser (NO database calls)
+// =============================================================================
+
+/**
+ * Parse a single Claude Code session directory into a ParsedSession.
+ * Pure function — no database knowledge.
+ *
+ * Returns: { session, messages[], metadata }
+ */
+export async function parseClaudeSession(
+  sessionId: string,
+  projectDir: string,
+  filePath: string
+): Promise<ParsedSession> {
+  const file = Bun.file(filePath);
+  const content = await file.text();
+  const messages = parseClaudeJsonlStructured(content);
+
+  // Extract title from first user message
+  const firstUser = messages.find((m) => m.role === "user");
+  const title = firstUser
+    ? firstUser.plainText.slice(0, 100).replace(/\n/g, " ")
+    : sessionId;
+
+  // Aggregate token usage and duration from all messages
+  let totalTokens = 0;
+  let totalDurationMs = 0;
+
+  for (const msg of messages) {
+    if (msg.metadata.tokenUsage) {
+      const u = msg.metadata.tokenUsage;
+      totalTokens += (u.input || 0) + (u.output || 0);
+    }
+
+    for (const block of msg.blocks) {
+      if (
+        block.type === "system_event" &&
+        block.eventType === "turn_duration" &&
+        typeof block.data.durationMs === "number"
+      ) {
+        totalDurationMs += block.data.durationMs;
+      }
+    }
+  }
+
+  return {
+    session: {
+      id: sessionId,
+      title,
+      created_at: messages[0]?.timestamp || new Date().toISOString(),
+    },
+    messages,
+    metadata: {
+      total_tokens: totalTokens || undefined,
+      total_duration_ms: totalDurationMs || undefined,
+    },
+  };
+}
+
+// =============================================================================
+// Ingestion (orchestrator — temporary wrapper for backward compatibility)
 // =============================================================================
 
 /**
  * Ingest Claude Code sessions into QMD's memory with structured block extraction.
+ * TEMPORARY: This will be removed in Phase 4 when orchestrator is refactored.
  */
 export async function ingestClaude(
   options: IngestOptions = {}
@@ -414,22 +476,24 @@ export async function ingestClaude(
 
   for (const session of sessions) {
     try {
-      const file = Bun.file(session.filePath);
-      const content = await file.text();
-      const structuredMessages = parseClaudeJsonlStructured(content);
+      // Use pure parser
+      const parsed = await parseClaudeSession(
+        session.sessionId,
+        session.projectDir,
+        session.filePath
+      );
 
-      if (structuredMessages.length === 0) {
+      if (parsed.messages.length === 0) {
         result.skipped++;
         continue;
       }
 
       // Incremental ingestion: count existing messages and only process new ones.
-      // This works because Claude JSONL files are append-only and message order is stable.
       const existingMessageCount: number =
         (db.prepare(`SELECT COUNT(*) as count FROM memory_messages WHERE session_id = ?`)
           .get(session.sessionId) as { count: number } | null)?.count ?? 0;
 
-      const newMessages = structuredMessages.slice(existingMessageCount);
+      const newMessages = parsed.messages.slice(existingMessageCount);
 
       if (newMessages.length === 0) {
         result.skipped++;
@@ -441,12 +505,6 @@ export async function ingestClaude(
       const projectPath = deriveProjectPath(session.projectDir);
       upsertProject(db, projectId, projectPath);
 
-      // Extract title from first user message (across all messages for consistency)
-      const firstUser = structuredMessages.find((m) => m.role === "user");
-      const title = firstUser
-        ? firstUser.plainText.slice(0, 100).replace(/\n/g, " ")
-        : "";
-
       // Process only new messages
       for (const msg of newMessages) {
         // Store via QMD (backward-compatible: plainText as content)
@@ -456,7 +514,7 @@ export async function ingestClaude(
           msg.role,
           msg.plainText || "(structured content)",
           {
-            title,
+            title: parsed.session.title,
             metadata: {
               ...msg.metadata,
               blocks: msg.blocks,
@@ -477,7 +535,7 @@ export async function ingestClaude(
                 session.sessionId,
                 block.toolName,
                 block.description || summarizeToolInput(block.toolName, block.input),
-                true, // success assumed; updated by tool_result if paired
+                true,
                 null,
                 createdAt
               );

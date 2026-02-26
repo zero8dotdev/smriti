@@ -1,13 +1,16 @@
 /**
- * codex.ts - Codex CLI conversation parser
+ * codex.ts - Codex CLI conversation parser (pure function)
  *
  * Reads conversation logs from ~/.codex/ directories and normalizes
- * to QMD's addMessage() format.
+ * to ParsedSession format.
+ *
+ * NO DATABASE CALLS — returns ParsedSession for orchestrator to handle persistence.
  */
 
 import { CODEX_LOGS_DIR } from "../config";
 import { addMessage } from "../qmd";
-import type { ParsedMessage, IngestResult, IngestOptions } from "./index";
+import type { ParsedMessage, ParsedSession } from "./types";
+import type { IngestResult, IngestOptions } from "./index";
 
 /** Shape of a Codex log entry */
 type CodexEntry = {
@@ -88,8 +91,57 @@ export async function discoverCodexSessions(
   return sessions;
 }
 
+// =============================================================================
+// Pure Parser (NO database calls)
+// =============================================================================
+
+/**
+ * Parse a single Codex session into a ParsedSession.
+ * Pure function — no database knowledge.
+ */
+export async function parseCodexSession(
+  sessionId: string,
+  filePath: string
+): Promise<ParsedSession> {
+  const file = Bun.file(filePath);
+  const content = await file.text();
+  const parsedMessages = parseCodexJsonl(content);
+
+  // Convert ParsedMessage to StructuredMessage
+  const messages: any[] = parsedMessages.map((msg, idx) => ({
+    id: `${sessionId}-msg-${idx}`,
+    sessionId,
+    sequence: idx,
+    timestamp: msg.timestamp || new Date().toISOString(),
+    role: msg.role,
+    agent: "codex",
+    blocks: [{ type: "text", text: msg.content }],
+    metadata: msg.metadata || {},
+    plainText: msg.content,
+  }));
+
+  const firstUser = parsedMessages.find((m) => m.role === "user");
+  const title = firstUser
+    ? firstUser.content.slice(0, 100).replace(/\n/g, " ")
+    : sessionId;
+
+  return {
+    session: {
+      id: sessionId,
+      title,
+      created_at: parsedMessages[0]?.timestamp || new Date().toISOString(),
+    },
+    messages,
+  };
+}
+
+// =============================================================================
+// Ingestion (orchestrator — temporary wrapper for backward compatibility)
+// =============================================================================
+
 /**
  * Ingest Codex CLI sessions into QMD's memory.
+ * TEMPORARY: This will be removed in Phase 4 when orchestrator is refactored.
  */
 export async function ingestCodex(
   options: IngestOptions = {}
@@ -116,33 +168,27 @@ export async function ingestCodex(
     }
 
     try {
-      const file = Bun.file(session.filePath);
-      const content = await file.text();
-      const messages = parseCodexJsonl(content);
+      // Use pure parser
+      const parsed = await parseCodexSession(session.sessionId, session.filePath);
 
-      if (messages.length === 0) {
+      if (parsed.messages.length === 0) {
         result.skipped++;
         continue;
       }
 
-      const firstUser = messages.find((m) => m.role === "user");
-      const title = firstUser
-        ? firstUser.content.slice(0, 100).replace(/\n/g, " ")
-        : "";
-
-      for (const msg of messages) {
-        await addMessage(db, session.sessionId, msg.role, msg.content, {
-          title,
+      for (const msg of parsed.messages) {
+        await addMessage(db, session.sessionId, msg.role, msg.plainText, {
+          title: parsed.session.title,
         });
       }
 
       upsertSessionMeta(db, session.sessionId, "codex");
       result.sessionsIngested++;
-      result.messagesIngested += messages.length;
+      result.messagesIngested += parsed.messages.length;
 
       if (onProgress) {
         onProgress(
-          `Ingested ${session.sessionId} (${messages.length} messages)`
+          `Ingested ${session.sessionId} (${parsed.messages.length} messages)`
         );
       }
     } catch (err: any) {
