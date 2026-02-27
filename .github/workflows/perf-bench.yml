@@ -1,4 +1,8 @@
-name: Perf Bench (Non-blocking)
+name: Perf Bench
+
+concurrency:
+  group: perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   pull_request:
@@ -20,7 +24,7 @@ on:
 
 jobs:
   bench:
-    name: Run ci-small benchmark
+    name: Bench / ci-small
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -1,4 +1,4 @@
-name: Dev->Main PR Autofill
+name: Dev->Main PR Metadata
 
 on:
   pull_request:
@@ -7,6 +7,7 @@ on:
 
 jobs:
   autofill:
+    name: PR / Dev->Main Metadata
     if: github.event.pull_request.head.ref == 'dev' && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     permissions:
@@ -29,8 +30,35 @@ jobs:
             const pull_number = context.payload.pull_request.number;
 
             const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const version = pkg.version || "0.0.0";
-            const title = `release: v${version} (dev -> main)`;
+            const pkgVersion = String(pkg.version || "0.0.0");
+
+            function parseSemver(v) {
+              const m = String(v).match(/^v?(\d+)\.(\d+)\.(\d+)$/);
+              if (!m) return [0, 0, 0];
+              return [Number(m[1]), Number(m[2]), Number(m[3])];
+            }
+
+            function cmp(a, b) {
+              const pa = parseSemver(a);
+              const pb = parseSemver(b);
+              if (pa[0] !== pb[0]) return pa[0] - pb[0];
+              if (pa[1] !== pb[1]) return pa[1] - pb[1];
+              return pa[2] - pb[2];
+            }
+
+            const tagRefs = await github.paginate(github.rest.repos.listTags, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const stableTags = tagRefs
+              .map((t) => t.name)
+              .filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
+            stableTags.sort((a, b) => cmp(a, b));
+            const latestTag = stableTags.length ? stableTags[stableTags.length - 1].replace(/^v/, "") : "0.0.0";
+
+            const version = cmp(pkgVersion, latestTag) >= 0 ? pkgVersion : latestTag;
+            const title = `release: v${version}`;
 
             const commits = await github.paginate(github.rest.pulls.listCommits, {
               owner,
@@ -48,10 +76,21 @@ jobs:
                 `<!-- AUTO-GENERATED:COMMITS -->\n${commitsText}\n<!-- /AUTO-GENERATED:COMMITS -->`
               );
 
+            const existingBody = context.payload.pull_request.body || "";
+            const preserveManual = /<!-- AUTO-GENERATED:COMMITS -->[\s\S]*?<!-- \/AUTO-GENERATED:COMMITS -->/m.test(existingBody);
+            const nextBody = preserveManual
+              ? existingBody
+                  .replace(/- Version: .*/m, `- Version: v${version}`)
+                  .replace(
+                    /<!-- AUTO-GENERATED:COMMITS -->[\s\S]*?<!-- \/AUTO-GENERATED:COMMITS -->/m,
+                    `<!-- AUTO-GENERATED:COMMITS -->\n${commitsText}\n<!-- /AUTO-GENERATED:COMMITS -->`
+                  )
+              : body;
+
             await github.rest.pulls.update({
               owner,
               repo,
               pull_number,
               title,
-              body,
+              body: nextBody,
             });
