@@ -1,4 +1,4 @@
-name: Commit Lint
+name: PR Commit Lint
 
 on:
   pull_request:
@@ -6,6 +6,7 @@ on:
 
 jobs:
   lint:
+    name: PR / Commit Lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
