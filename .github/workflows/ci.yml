@@ -1,4 +1,8 @@
-name: CI
+name: CI Core
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   push:
@@ -8,8 +12,10 @@ on:
 
 jobs:
   test-pr:
-    if: github.event_name == 'pull_request'
-    name: Test (ubuntu-latest)
+    if: >
+      github.event_name == 'pull_request' &&
+      !(github.event.pull_request.head.ref == 'dev' && github.event.pull_request.base.ref == 'main')
+    name: PR / Tests (ubuntu)
     runs-on: ubuntu-latest
 
     steps:
@@ -32,7 +38,7 @@ jobs:
 
   test-merge:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
-    name: Test (${{ matrix.os }})
+    name: Push / Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -58,7 +64,7 @@ jobs:
         run: bun test test/
 
   dev-draft-release:
-    name: Dev Draft Release
+    name: Push(dev) / Draft Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     needs: test-merge
     runs-on: ubuntu-latest
@@ -72,11 +78,19 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
       - name: Compute dev tag
-        id: tag
+        id: meta
         run: |
-          BASE_VERSION=$(node -p "require('./package.json').version")
-          DEV_TAG="v${BASE_VERSION}-dev.${{ github.run_number }}"
+          bun run scripts/release-meta.ts --allow-invalid --github-output "$GITHUB_OUTPUT"
+          DEV_TAG="${{ steps.meta.outputs.next_version }}-dev.${{ github.run_number }}"
           echo "dev_tag=${DEV_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Remove previous dev draft releases and tags
@@ -122,9 +136,10 @@ jobs:
       - name: Create draft prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.dev_tag }}
+          tag_name: ${{ steps.meta.outputs.dev_tag }}
           target_commitish: ${{ github.sha }}
-          name: Dev Draft ${{ steps.tag.outputs.dev_tag }}
-          generate_release_notes: true
+          name: Dev Draft ${{ steps.meta.outputs.dev_tag }}
+          body: ${{ steps.meta.outputs.release_notes }}
+          generate_release_notes: false
           draft: true
           prerelease: true
