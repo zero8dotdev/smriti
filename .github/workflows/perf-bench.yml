@@ -1,0 +1,48 @@
+name: Perf Bench (Non-blocking)
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "src/**"
+      - "qmd/src/**"
+      - "scripts/bench-*.ts"
+      - "bench/**"
+      - ".github/workflows/perf-bench.yml"
+  push:
+    branches: [main, dev, "feature/**"]
+    paths:
+      - "src/**"
+      - "qmd/src/**"
+      - "scripts/bench-*.ts"
+      - "bench/**"
+      - ".github/workflows/perf-bench.yml"
+
+jobs:
+  bench:
+    name: Run ci-small benchmark
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run benchmark (no-llm)
+        run: bun run scripts/bench-qmd.ts --profile ci-small --out bench/results/ci-small.json --no-llm
+
+      - name: Compare against baseline (non-blocking)
+        run: bun run scripts/bench-compare.ts --baseline bench/baseline.ci-small.json --current bench/results/ci-small.json --threshold 0.2
+
+      - name: Upload benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-ci-small
+          path: bench/results/ci-small.json
