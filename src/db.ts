@@ -408,6 +408,18 @@ const DEFAULT_AGENTS = [
     log_pattern: ".cursor/**/*.json",
     parser: "cursor",
   },
+  {
+    id: "cline",
+    display_name: "Cline",
+    log_pattern: "~/.cline/tasks/**/*.json",
+    parser: "cline",
+  },
+  {
+    id: "copilot",
+    display_name: "GitHub Copilot",
+    log_pattern: "*/chatSessions/*.json",
+    parser: "copilot",
+  },
 ] as const;
 
 /** Default category taxonomy */
