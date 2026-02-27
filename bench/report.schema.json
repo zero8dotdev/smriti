@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Smriti QMD Benchmark Report",
+  "type": "object",
+  "required": ["profile", "mode", "generated_at", "corpus", "metrics", "counts"],
+  "properties": {
+    "profile": { "type": "string" },
+    "mode": { "enum": ["no-llm", "llm"] },
+    "generated_at": { "type": "string" },
+    "db_path": { "type": "string" },
+    "corpus": {
+      "type": "object",
+      "required": ["sessions", "messages_per_session", "total_messages"],
+      "properties": {
+        "sessions": { "type": "integer" },
+        "messages_per_session": { "type": "integer" },
+        "total_messages": { "type": "integer" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["ingest_throughput_msgs_per_sec", "ingest_p95_ms_per_session", "fts", "recall", "vector"],
+      "properties": {
+        "ingest_throughput_msgs_per_sec": { "type": "number" },
+        "ingest_p95_ms_per_session": { "type": "number" },
+        "fts": { "$ref": "#/$defs/timed" },
+        "recall": { "$ref": "#/$defs/timed" },
+        "vector": {
+          "oneOf": [
+            { "$ref": "#/$defs/timed" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": ["memory_sessions", "memory_messages", "content_vectors"],
+      "properties": {
+        "memory_sessions": { "type": "integer" },
+        "memory_messages": { "type": "integer" },
+        "content_vectors": { "type": "integer" }
+      }
+    }
+  },
+  "$defs": {
+    "timed": {
+      "type": "object",
+      "required": ["p50_ms", "p95_ms", "mean_ms", "runs"],
+      "properties": {
+        "p50_ms": { "type": "number" },
+        "p95_ms": { "type": "number" },
+        "mean_ms": { "type": "number" },
+        "runs": { "type": "integer" }
+      }
+    }
+  }
+}
