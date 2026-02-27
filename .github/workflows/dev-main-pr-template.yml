@@ -1,0 +1,57 @@
+name: Dev->Main PR Autofill
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+
+jobs:
+  autofill:
+    if: github.event.pull_request.head.ref == 'dev' && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auto-set title and body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const path = ".github/PULL_REQUEST_TEMPLATE/dev-to-main.md";
+            const template = fs.readFileSync(path, "utf8");
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const version = pkg.version || "0.0.0";
+            const title = `release: v${version} (dev -> main)`;
+
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+            const commitLines = commits.map((c) => `- ${c.commit.message.split("\n")[0]} (${c.sha.slice(0, 7)})`);
+            const commitsText = commitLines.length ? commitLines.join("\n") : "- No commits found.";
+
+            const body = template
+              .replace("`v<package.json.version>`", `v${version}`)
+              .replace(
+                /<!-- AUTO-GENERATED:COMMITS -->[\s\S]*?<!-- \/AUTO-GENERATED:COMMITS -->/m,
+                `<!-- AUTO-GENERATED:COMMITS -->\n${commitsText}\n<!-- /AUTO-GENERATED:COMMITS -->`
+              );
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number,
+              title,
+              body,
+            });
