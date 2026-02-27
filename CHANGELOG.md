@@ -1,3 +1,21 @@
+## [0.4.0] - 2026-02-27
+
+### Fixed
+
+- fix: add missing cline and copilot to default agents seed ([#31](https://github.com/zero8dotdev/smriti/pull/31))
+
+### Changed
+
+- chore: e2e dev release flow smoke test ([#36](https://github.com/zero8dotdev/smriti/pull/36))
+
+### Other
+
+- release: v0.3.2 (dev -> main) ([#37](https://github.com/zero8dotdev/smriti/pull/37))
+- release: v0.3.2 (dev -> main) ([#35](https://github.com/zero8dotdev/smriti/pull/35))
+- Feature/bench scorecard ci windows fixes ([#34](https://github.com/zero8dotdev/smriti/pull/34))
+- New branch ([#33](https://github.com/zero8dotdev/smriti/pull/33))
+
+
 # Changelog
 
 All notable changes to smriti are documented here. Format:
