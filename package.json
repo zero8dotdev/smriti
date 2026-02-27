@@ -1,6 +1,6 @@
 {
   "name": "smriti",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Smriti - Unified memory layer across all AI agents",
   "type": "module",
   "bin": {
