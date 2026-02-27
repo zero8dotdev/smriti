@@ -12,7 +12,8 @@
     "test": "bun test",
     "smriti": "bun src/index.ts",
     "bench:qmd": "bun run scripts/bench-qmd.ts --profile ci-small --out bench/results/ci-small.json --no-llm",
-    "bench:compare": "bun run scripts/bench-compare.ts --baseline bench/baseline.ci-small.json --current bench/results/ci-small.json --threshold 0.2"
+    "bench:compare": "bun run scripts/bench-compare.ts --baseline bench/baseline.ci-small.json --current bench/results/ci-small.json --threshold 0.2",
+    "bench:ingest-hotpaths": "bun run scripts/bench-ingest-hotpaths.ts"
   },
   "dependencies": {
     "node-llama-cpp": "^3.0.0",
