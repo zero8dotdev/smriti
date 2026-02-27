@@ -1,5 +1,9 @@
 name: CI
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main, dev, "feature/**"]
@@ -73,10 +77,10 @@ jobs:
           submodules: recursive
 
       - name: Compute dev tag
-        id: tag
+        id: meta
         run: |
-          BASE_VERSION=$(node -p "require('./package.json').version")
-          DEV_TAG="v${BASE_VERSION}-dev.${{ github.run_number }}"
+          bun run scripts/release-meta.ts --github-output "$GITHUB_OUTPUT"
+          DEV_TAG="${{ steps.meta.outputs.next_version }}-dev.${{ github.run_number }}"
           echo "dev_tag=${DEV_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Remove previous dev draft releases and tags
@@ -122,9 +126,10 @@ jobs:
       - name: Create draft prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.dev_tag }}
+          tag_name: ${{ steps.meta.outputs.dev_tag }}
           target_commitish: ${{ github.sha }}
-          name: Dev Draft ${{ steps.tag.outputs.dev_tag }}
-          generate_release_notes: true
+          name: Dev Draft ${{ steps.meta.outputs.dev_tag }}
+          body: ${{ steps.meta.outputs.release_notes }}
+          generate_release_notes: false
           draft: true
           prerelease: true
