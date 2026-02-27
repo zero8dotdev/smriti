@@ -7,7 +7,31 @@ on:
     branches: [main, dev]
 
 jobs:
-  test:
+  test-pr:
+    if: github.event_name == 'pull_request'
+    name: Test (ubuntu-latest)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run tests
+        # Fast PR validation on Linux only.
+        run: bun test test/
+
+  test-merge:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -30,7 +54,5 @@ jobs:
         run: bun install
 
       - name: Run tests
-        # We only run tests in the smriti/test directory.
-        # qmd/ tests are skipped here as they are part of the backbone submodule
-        # and may have heavy dependencies (like local LLMs) that the runner lacks.
+        # Full cross-platform test matrix for merge branches.
         run: bun test test/
