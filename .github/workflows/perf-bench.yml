@@ -1,5 +1,9 @@
 name: Perf Bench (Non-blocking)
 
+concurrency:
+  group: perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     branches: [main, dev]

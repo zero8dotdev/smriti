@@ -16,7 +16,8 @@
     "bench:compare": "bun run scripts/bench-compare.ts --baseline bench/baseline.ci-small.json --current bench/results/ci-small.json --threshold 0.2",
     "bench:scorecard": "bun run scripts/bench-scorecard.ts --baseline bench/baseline.ci-small.json --profile ci-small --threshold-pct 20",
     "bench:ingest-hotpaths": "bun run scripts/bench-ingest-hotpaths.ts",
-    "bench:ingest-pipeline": "bun run scripts/bench-ingest-pipeline.ts --sessions 120 --messages 12"
+    "bench:ingest-pipeline": "bun run scripts/bench-ingest-pipeline.ts --sessions 120 --messages 12",
+    "release:meta": "bun run scripts/release-meta.ts"
   },
   "dependencies": {
     "node-llama-cpp": "^3.0.0",

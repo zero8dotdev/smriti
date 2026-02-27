@@ -1,5 +1,9 @@
 name: Release
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
     tags:
@@ -30,112 +34,27 @@ jobs:
       - name: Run tests
         run: bun test test/
 
-      - name: Generate changelog from merged PRs
-        id: changelog
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Compute release metadata from conventional commits
+        id: meta
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          TAG="${GITHUB_REF_NAME}"
+          bun run scripts/release-meta.ts \
+            --current-tag "${GITHUB_REF_NAME}" \
+            --to "${GITHUB_SHA}" \
+            --github-output "$GITHUB_OUTPUT"
 
-          # Find previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-
-          if [ -z "$PREV_TAG" ]; then
-            echo "No previous tag found, using all merged PRs"
-            PREV_DATE="2000-01-01"
-          else
-            PREV_DATE=$(git log -1 --format=%aI "$PREV_TAG" | cut -dT -f1)
-          fi
-
-          NOW=$(date -u +%Y-%m-%d)
-
-          # Fetch merged PRs between previous tag date and now
-          PRS=$(gh pr list \
-            --state merged \
-            --search "merged:${PREV_DATE}..${NOW}" \
-            --json number,title,mergedAt \
-            --limit 100 \
-            --jq '.[] | "\(.number)\t\(.title)"' 2>/dev/null || echo "")
-
-          # Categorize PRs by conventional commit prefix
-          FIXED=""
-          ADDED=""
-          CHANGED=""
-          DOCS=""
-          OTHER=""
-
-          while IFS=$'\t' read -r num title; do
-            [ -z "$num" ] && continue
-            entry="- ${title} ([#${num}](https://github.com/${{ github.repository }}/pull/${num}))"
-
-            case "$title" in
-              fix:*|fix\(*) FIXED="${FIXED}${entry}"$'\n' ;;
-              feat:*|feat\(*) ADDED="${ADDED}${entry}"$'\n' ;;
-              chore:*|chore\(*|refactor:*|refactor\(*|perf:*|perf\(*) CHANGED="${CHANGED}${entry}"$'\n' ;;
-              docs:*|docs\(*) DOCS="${DOCS}${entry}"$'\n' ;;
-              *) OTHER="${OTHER}${entry}"$'\n' ;;
-            esac
-          done <<< "$PRS"
-
-          # Build release notes
-          NOTES=""
-
-          if [ -n "$FIXED" ]; then
-            NOTES="${NOTES}### Fixed"$'\n\n'"${FIXED}"$'\n'
-          fi
-          if [ -n "$ADDED" ]; then
-            NOTES="${NOTES}### Added"$'\n\n'"${ADDED}"$'\n'
-          fi
-          if [ -n "$CHANGED" ]; then
-            NOTES="${NOTES}### Changed"$'\n\n'"${CHANGED}"$'\n'
-          fi
-          if [ -n "$DOCS" ]; then
-            NOTES="${NOTES}### Documentation"$'\n\n'"${DOCS}"$'\n'
-          fi
-          if [ -n "$OTHER" ]; then
-            NOTES="${NOTES}### Other"$'\n\n'"${OTHER}"$'\n'
-          fi
-
-          # Fallback: if no PRs found, use auto-generated notes
-          if [ -z "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
-            echo "HAS_NOTES=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "HAS_NOTES=true" >> "$GITHUB_OUTPUT"
-
-            # Build full changelog entry
-            CHANGELOG_ENTRY="## [${VERSION}] - ${NOW}"$'\n\n'"${NOTES}"
-
-            # Prepend to CHANGELOG.md
-            if [ -f CHANGELOG.md ]; then
-              # Insert after the header line(s)
-              echo "${CHANGELOG_ENTRY}" | cat - CHANGELOG.md > CHANGELOG.tmp
-              mv CHANGELOG.tmp CHANGELOG.md
-            else
-              printf '%s\n\n%s' "# Changelog" "${CHANGELOG_ENTRY}" > CHANGELOG.md
-            fi
-
-            # Save notes for release body
-            {
-              echo "RELEASE_NOTES<<EOF"
-              echo "$NOTES"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Commit CHANGELOG.md
-        if: steps.changelog.outputs.HAS_NOTES == 'true'
+      - name: Validate tag matches semantic bump
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          git commit -m "docs: update CHANGELOG.md for ${GITHUB_REF_NAME} [skip ci]"
-          git push origin HEAD:main
+          EXPECTED="${{ steps.meta.outputs.next_version }}"
+          ACTUAL="${GITHUB_REF_NAME}"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "Tag/version mismatch: expected ${EXPECTED}, got ${ACTUAL}"
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{ steps.changelog.outputs.HAS_NOTES == 'true' && steps.changelog.outputs.RELEASE_NOTES || '' }}
-          generate_release_notes: ${{ steps.changelog.outputs.HAS_NOTES != 'true' }}
+          body: ${{ steps.meta.outputs.release_notes }}
+          generate_release_notes: false
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
