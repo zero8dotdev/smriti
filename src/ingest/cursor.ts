@@ -5,6 +5,7 @@
  * and normalizes to QMD's addMessage() format.
  */
 
+import { join } from "path";
 import { addMessage } from "../qmd";
 import type { ParsedMessage, IngestResult, IngestOptions } from "./index";
 
@@ -83,10 +84,11 @@ export async function discoverCursorSessions(
   try {
     const glob = new Bun.Glob("**/*.json");
     for await (const match of glob.scan({ cwd: cursorDir, absolute: false })) {
-      const sessionId = `cursor-${match.replace(/\.json$/, "").replace(/\//g, "-")}`;
+      const normalizedMatch = match.replaceAll("\\", "/");
+      const sessionId = `cursor-${normalizedMatch.replace(/\.json$/, "").replaceAll("/", "-")}`;
       sessions.push({
         sessionId,
-        filePath: `${cursorDir}/${match}`,
+        filePath: join(cursorDir, normalizedMatch),
         projectPath,
       });
     }

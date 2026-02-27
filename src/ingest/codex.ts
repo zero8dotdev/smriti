@@ -5,6 +5,7 @@
  * to QMD's addMessage() format.
  */
 
+import { join } from "path";
 import { CODEX_LOGS_DIR } from "../config";
 import { addMessage } from "../qmd";
 import type { ParsedMessage, IngestResult, IngestOptions } from "./index";
@@ -75,10 +76,11 @@ export async function discoverCodexSessions(
   try {
     const glob = new Bun.Glob("**/*.jsonl");
     for await (const match of glob.scan({ cwd: dir, absolute: false })) {
-      const sessionId = match.replace(/\.jsonl$/, "").replace(/\//g, "-");
+      const normalizedMatch = match.replaceAll("\\", "/");
+      const sessionId = normalizedMatch.replace(/\.jsonl$/, "").replaceAll("/", "-");
       sessions.push({
         sessionId: `codex-${sessionId}`,
-        filePath: `${dir}/${match}`,
+        filePath: join(dir, normalizedMatch),
       });
     }
   } catch {

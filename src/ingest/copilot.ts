@@ -209,13 +209,14 @@ export async function discoverCopilotSessions(options: {
     const glob = new Bun.Glob("*/chatSessions/*.json");
     try {
       for await (const match of glob.scan({ cwd: root, absolute: false })) {
-        const filePath = join(root, match);
-        const hashDir = join(root, match.split("/")[0]);
+        const normalizedMatch = match.replaceAll("\\", "/");
+        const filePath = join(root, normalizedMatch);
+        const hashDir = join(root, normalizedMatch.split("/")[0] || "");
         const workspacePath = readWorkspacePath(hashDir);
 
         if (options.projectPath && workspacePath !== options.projectPath) continue;
 
-        const sessionId = `copilot-${basename(match, ".json")}`;
+        const sessionId = `copilot-${basename(normalizedMatch, ".json")}`;
         sessions.push({ sessionId, filePath, workspacePath });
       }
     } catch {

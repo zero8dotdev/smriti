@@ -7,7 +7,7 @@
  */
 
 import { existsSync } from "fs";
-import { basename } from "path";
+import { basename, join } from "path";
 import { CLAUDE_LOGS_DIR, PROJECTS_ROOT } from "../config";
 import { addMessage } from "../qmd";
 import type { ParsedMessage, StructuredMessage, MessageMetadata } from "./types";
@@ -365,13 +365,14 @@ export async function discoverClaudeSessions(
   }> = [];
 
   for await (const match of glob.scan({ cwd: dir, absolute: false })) {
-    const [projectDir, filename] = match.split("/");
+    const normalizedMatch = match.replaceAll("\\", "/");
+    const [projectDir, filename] = normalizedMatch.split("/");
     if (!projectDir || !filename) continue;
     const sessionId = filename.replace(".jsonl", "");
     sessions.push({
       sessionId,
       projectDir,
-      filePath: `${dir}/${match}`,
+      filePath: join(dir, normalizedMatch),
     });
   }
 
