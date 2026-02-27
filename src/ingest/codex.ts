@@ -94,61 +94,11 @@ export async function discoverCodexSessions(
 export async function ingestCodex(
   options: IngestOptions = {}
 ): Promise<IngestResult> {
-  const { db, existingSessionIds, onProgress } = options;
+  const { db, onProgress } = options;
   if (!db) throw new Error("Database required for ingestion");
-
-  const { upsertSessionMeta } = await import("../db");
-
-  const sessions = await discoverCodexSessions(options.logsDir);
-  const result: IngestResult = {
-    agent: "codex",
-    sessionsFound: sessions.length,
-    sessionsIngested: 0,
-    messagesIngested: 0,
-    skipped: 0,
-    errors: [],
-  };
-
-  for (const session of sessions) {
-    if (existingSessionIds?.has(session.sessionId)) {
-      result.skipped++;
-      continue;
-    }
-
-    try {
-      const file = Bun.file(session.filePath);
-      const content = await file.text();
-      const messages = parseCodexJsonl(content);
-
-      if (messages.length === 0) {
-        result.skipped++;
-        continue;
-      }
-
-      const firstUser = messages.find((m) => m.role === "user");
-      const title = firstUser
-        ? firstUser.content.slice(0, 100).replace(/\n/g, " ")
-        : "";
-
-      for (const msg of messages) {
-        await addMessage(db, session.sessionId, msg.role, msg.content, {
-          title,
-        });
-      }
-
-      upsertSessionMeta(db, session.sessionId, "codex");
-      result.sessionsIngested++;
-      result.messagesIngested += messages.length;
-
-      if (onProgress) {
-        onProgress(
-          `Ingested ${session.sessionId} (${messages.length} messages)`
-        );
-      }
-    } catch (err: any) {
-      result.errors.push(`${session.sessionId}: ${err.message}`);
-    }
-  }
-
-  return result;
+  const { ingest } = await import("./index");
+  return ingest(db, "codex", {
+    logsDir: options.logsDir,
+    onProgress,
+  });
 }

@@ -6,6 +6,9 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { ParsedMessage, StructuredMessage } from "./types";
+import { resolveSession } from "./session-resolver";
+import { storeBlocks, storeCosts, storeMessage, storeSession } from "./store-gateway";
 
 // =============================================================================
 // Types — re-export from types.ts
@@ -28,6 +31,145 @@ export type IngestOptions = {
   onProgress?: (msg: string) => void;
   logsDir?: string;
 };
+
+function isStructuredMessage(msg: ParsedMessage | StructuredMessage): msg is StructuredMessage {
+  return typeof (msg as StructuredMessage).plainText === "string" &&
+    Array.isArray((msg as StructuredMessage).blocks);
+}
+
+async function ingestParsedSessions(
+  db: Database,
+  agentId: string,
+  sessions: Array<{ sessionId: string; filePath: string; projectDir?: string }>,
+  parser: (sessionPath: string, sessionId: string) => Promise<{
+    session: { id: string; title: string; created_at: string };
+    messages: Array<ParsedMessage | StructuredMessage>;
+  }>,
+  options: {
+    existingSessionIds: Set<string>;
+    onProgress?: (msg: string) => void;
+    explicitProjectId?: string;
+    explicitProjectPath?: string;
+    incremental?: boolean;
+  } = {
+    existingSessionIds: new Set(),
+  }
+): Promise<IngestResult> {
+  const result: IngestResult = {
+    agent: agentId,
+    sessionsFound: sessions.length,
+    sessionsIngested: 0,
+    messagesIngested: 0,
+    skipped: 0,
+    errors: [],
+  };
+
+  for (const session of sessions) {
+    if (!options.incremental && options.existingSessionIds.has(session.sessionId)) {
+      result.skipped++;
+      continue;
+    }
+
+    try {
+      const parsed = await parser(session.filePath, session.sessionId);
+      if (parsed.messages.length === 0) {
+        result.skipped++;
+        continue;
+      }
+
+      const resolved = resolveSession({
+        db,
+        sessionId: session.sessionId,
+        agentId,
+        projectDir: session.projectDir,
+        explicitProjectId: options.explicitProjectId,
+        explicitProjectPath: options.explicitProjectPath,
+      });
+
+      const messagesToIngest = options.incremental
+        ? parsed.messages.slice(resolved.existingMessageCount)
+        : parsed.messages;
+
+      if (messagesToIngest.length === 0) {
+        result.skipped++;
+        continue;
+      }
+
+      for (const msg of messagesToIngest) {
+        const content = isStructuredMessage(msg) ? msg.plainText || "(structured content)" : msg.content;
+        const messageOptions = isStructuredMessage(msg)
+          ? {
+              title: parsed.session.title,
+              metadata: {
+                ...msg.metadata,
+                blocks: msg.blocks,
+              },
+            }
+          : { title: parsed.session.title };
+
+        const stored = await storeMessage(db, session.sessionId, msg.role, content, messageOptions);
+        if (!stored.success) {
+          throw new Error(stored.error || "Failed to store message");
+        }
+
+        if (isStructuredMessage(msg)) {
+          storeBlocks(
+            db,
+            stored.messageId,
+            session.sessionId,
+            resolved.projectId,
+            msg.blocks,
+            msg.timestamp || new Date().toISOString()
+          );
+
+          if (msg.metadata.tokenUsage) {
+            const u = msg.metadata.tokenUsage;
+            storeCosts(
+              db,
+              session.sessionId,
+              msg.metadata.model || null,
+              u.input,
+              u.output,
+              (u.cacheCreate || 0) + (u.cacheRead || 0),
+              0
+            );
+          }
+
+          for (const block of msg.blocks) {
+            if (
+              block.type === "system_event" &&
+              block.eventType === "turn_duration" &&
+              typeof block.data.durationMs === "number"
+            ) {
+              storeCosts(db, session.sessionId, null, 0, 0, 0, block.data.durationMs as number);
+            }
+          }
+        }
+      }
+
+      storeSession(
+        db,
+        session.sessionId,
+        agentId,
+        resolved.projectId,
+        resolved.projectPath
+      );
+
+      result.sessionsIngested++;
+      result.messagesIngested += messagesToIngest.length;
+      if (options.onProgress) {
+        options.onProgress(
+          `Ingested ${session.sessionId} (${messagesToIngest.length} messages)` +
+            (resolved.projectId ? ` - project: ${resolved.projectId}` : "")
+        );
+      }
+    } catch (err: any) {
+      result.errors.push(`${session.sessionId}: ${err.message}`);
+    }
+  }
+
+  return result;
+}
 
 // =============================================================================
 // Orchestrator
@@ -54,6 +196,7 @@ export async function ingest(
     onProgress?: (msg: string) => void;
     logsDir?: string;
     projectPath?: string;
+    storageRoots?: string[];
     filePath?: string;
     format?: "chat" | "jsonl";
     title?: string;
@@ -72,37 +215,124 @@ export async function ingest(
   switch (agent) {
     case "claude":
     case "claude-code": {
-      const { ingestClaude } = await import("./claude");
-      return ingestClaude(baseOptions);
+      const { discoverClaudeSessions } = await import("./claude");
+      const { parseClaude } = await import("./parsers");
+      const discovered = await discoverClaudeSessions(options.logsDir);
+      const sessions = discovered.map((s) => ({
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+        projectDir: s.projectDir,
+      }));
+      return ingestParsedSessions(db, "claude-code", sessions, parseClaude, {
+        existingSessionIds,
+        onProgress: options.onProgress,
+        explicitProjectId: options.projectId,
+        incremental: true,
+      });
     }
     case "codex": {
-      const { ingestCodex } = await import("./codex");
-      return ingestCodex(baseOptions);
+      const { discoverCodexSessions } = await import("./codex");
+      const { parseCodex } = await import("./parsers");
+      const discovered = await discoverCodexSessions(options.logsDir);
+      const sessions = discovered.map((s) => ({
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+      }));
+      return ingestParsedSessions(db, "codex", sessions, parseCodex, {
+        existingSessionIds,
+        onProgress: options.onProgress,
+        explicitProjectId: options.projectId,
+      });
     }
     case "cursor": {
-      const { ingestCursor } = await import("./cursor");
-      return ingestCursor({ ...baseOptions, projectPath: options.projectPath });
+      if (!options.projectPath) {
+        return {
+          agent: "cursor",
+          sessionsFound: 0,
+          sessionsIngested: 0,
+          messagesIngested: 0,
+          skipped: 0,
+          errors: ["projectPath required for Cursor ingestion"],
+        };
+      }
+      const { discoverCursorSessions } = await import("./cursor");
+      const { parseCursor } = await import("./parsers");
+      const discovered = await discoverCursorSessions(options.projectPath);
+      const sessions = discovered.map((s) => ({
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+        projectDir: s.projectPath,
+      }));
+      return ingestParsedSessions(db, "cursor", sessions, parseCursor, {
+        existingSessionIds,
+        onProgress: options.onProgress,
+        explicitProjectId: options.projectId,
+      });
     }
     case "cline": {
-      const { ingestCline } = await import("./cline");
-      return ingestCline(baseOptions);
+      const { discoverClineSessions } = await import("./cline");
+      const { parseCline } = await import("./parsers");
+      const discovered = await discoverClineSessions(options.logsDir);
+      const sessions = discovered.map((s) => ({
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+        projectDir: s.projectDir,
+      }));
+      return ingestParsedSessions(db, "cline", sessions, parseCline, {
+        existingSessionIds,
+        onProgress: options.onProgress,
+        explicitProjectId: options.projectId,
+      });
     }
     case "copilot": {
-      const { ingestCopilot } = await import("./copilot");
-      return ingestCopilot({ ...baseOptions, projectPath: options.projectPath });
+      const { discoverCopilotSessions } = await import("./copilot");
+      const { parseCopilot } = await import("./parsers");
+      const discovered = await discoverCopilotSessions({
+        projectPath: options.projectPath,
+        storageRoots: options.storageRoots,
+      });
+      const sessions = discovered.map((s) => ({
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+        projectDir: s.workspacePath || undefined,
+      }));
+      return ingestParsedSessions(db, "copilot", sessions, parseCopilot, {
+        existingSessionIds,
+        onProgress: options.onProgress,
+        explicitProjectId: options.projectId,
+      });
     }
     case "file":
     case "generic": {
-      const { ingestGeneric } = await import("./generic");
-      return ingestGeneric({
-        ...baseOptions,
-        filePath: options.filePath || "",
-        format: options.format,
-        title: options.title,
-        sessionId: options.sessionId,
-        projectId: options.projectId,
-        agentName: agent === "file" ? "generic" : agent,
-      });
+      if (!options.filePath) {
+        return {
+          agent: agent === "file" ? "generic" : agent,
+          sessionsFound: 0,
+          sessionsIngested: 0,
+          messagesIngested: 0,
+          skipped: 0,
+          errors: ["File path is required for generic ingestion"],
+        };
+      }
+      const { parseGeneric } = await import("./parsers");
+      const sessionId = options.sessionId || `generic-${crypto.randomUUID().slice(0, 8)}`;
+      const parsed = await parseGeneric(options.filePath, sessionId, options.format || "chat");
+      if (options.title) {
+        parsed.session.title = options.title;
+      }
+      const result = await ingestParsedSessions(
+        db,
+        agent === "file" ? "generic" : agent,
+        [{ sessionId, filePath: options.filePath, projectDir: options.projectPath }],
+        async () => parsed,
+        {
+          existingSessionIds,
+          onProgress: options.onProgress,
+          explicitProjectId: options.projectId,
+          explicitProjectPath: options.projectPath,
+        }
+      );
+      return result;
     }
     default:
       return {

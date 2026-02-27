@@ -236,75 +236,12 @@ export async function discoverCopilotSessions(options: {
 export async function ingestCopilot(
   options: IngestOptions & { projectPath?: string; storageRoots?: string[] } = {}
 ): Promise<IngestResult> {
-  const { db, existingSessionIds, onProgress } = options;
+  const { db, onProgress } = options;
   if (!db) throw new Error("Database required for ingestion");
-
-  const { upsertProject, upsertSessionMeta } = await import("../db");
-
-  const sessions = await discoverCopilotSessions({
-    storageRoots: options.storageRoots,
+  const { ingest } = await import("./index");
+  return ingest(db, "copilot", {
     projectPath: options.projectPath,
+    storageRoots: options.storageRoots,
+    onProgress,
   });
-
-  const result: IngestResult = {
-    agent: "copilot",
-    sessionsFound: sessions.length,
-    sessionsIngested: 0,
-    messagesIngested: 0,
-    skipped: 0,
-    errors: [],
-  };
-
-  if (sessions.length === 0) {
-    const roots = options.storageRoots ?? resolveVSCodeStorageRoots();
-    if (roots.length === 0) {
-      result.errors.push(
-        "VS Code workspaceStorage not found. Is VS Code installed? " +
-        "Set COPILOT_STORAGE_DIR to override the path."
-      );
-    }
-    return result;
-  }
-
-  for (const session of sessions) {
-    if (existingSessionIds?.has(session.sessionId)) {
-      result.skipped++;
-      continue;
-    }
-
-    try {
-      const content = await Bun.file(session.filePath).text();
-      const messages = parseCopilotJson(content);
-
-      if (messages.length === 0) {
-        result.skipped++;
-        continue;
-      }
-
-      const workspacePath = session.workspacePath || PROJECTS_ROOT;
-      const projectId = deriveProjectId(workspacePath);
-      upsertProject(db, projectId, workspacePath);
-
-      const firstUser = messages.find((m) => m.role === "user");
-      const title = firstUser
-        ? firstUser.content.slice(0, 100).replace(/\n/g, " ")
-        : "Copilot Chat";
-
-      for (const msg of messages) {
-        await addMessage(db, session.sessionId, msg.role, msg.content, { title });
-      }
-
-      upsertSessionMeta(db, session.sessionId, "copilot", projectId);
-      result.sessionsIngested++;
-      result.messagesIngested += messages.length;
-
-      if (onProgress) {
-        onProgress(`Ingested ${session.sessionId} (${messages.length} messages) — project: ${projectId}`);
-      }
-    } catch (err: any) {
-      result.errors.push(`${session.sessionId}: ${err.message}`);
-    }
-  }
-
-  return result;
 }
