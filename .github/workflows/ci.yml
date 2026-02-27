@@ -1,4 +1,4 @@
-name: CI
+name: CI Core
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -13,7 +13,7 @@ on:
 jobs:
   test-pr:
     if: github.event_name == 'pull_request'
-    name: Test (ubuntu-latest)
+    name: PR / Tests (ubuntu)
     runs-on: ubuntu-latest
 
     steps:
@@ -36,7 +36,7 @@ jobs:
 
   test-merge:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
-    name: Test (${{ matrix.os }})
+    name: Push / Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -62,7 +62,7 @@ jobs:
         run: bun test test/
 
   dev-draft-release:
-    name: Dev Draft Release
+    name: Push(dev) / Draft Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     needs: test-merge
     runs-on: ubuntu-latest
