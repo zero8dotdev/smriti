@@ -29,7 +29,34 @@ jobs:
             const pull_number = context.payload.pull_request.number;
 
             const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const version = pkg.version || "0.0.0";
+            const pkgVersion = String(pkg.version || "0.0.0");
+
+            function parseSemver(v) {
+              const m = String(v).match(/^v?(\d+)\.(\d+)\.(\d+)$/);
+              if (!m) return [0, 0, 0];
+              return [Number(m[1]), Number(m[2]), Number(m[3])];
+            }
+
+            function cmp(a, b) {
+              const pa = parseSemver(a);
+              const pb = parseSemver(b);
+              if (pa[0] !== pb[0]) return pa[0] - pb[0];
+              if (pa[1] !== pb[1]) return pa[1] - pb[1];
+              return pa[2] - pb[2];
+            }
+
+            const tagRefs = await github.paginate(github.rest.repos.listTags, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const stableTags = tagRefs
+              .map((t) => t.name)
+              .filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
+            stableTags.sort((a, b) => cmp(a, b));
+            const latestTag = stableTags.length ? stableTags[stableTags.length - 1].replace(/^v/, "") : "0.0.0";
+
+            const version = cmp(pkgVersion, latestTag) >= 0 ? pkgVersion : latestTag;
             const title = `release: v${version}`;
 
             const commits = await github.paginate(github.rest.pulls.listCommits, {
