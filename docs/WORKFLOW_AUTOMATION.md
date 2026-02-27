@@ -27,7 +27,7 @@ Last updated: 2026-02-27
 - Trigger: `pull_request` events targeting `main`.
 - Condition: applies only when `head=dev` and `base=main`.
 - Actions:
-  - Sets PR title to `release: v<version> (dev -> main)`
+  - Sets PR title to `release: v<version>`
   - Fills PR body from `.github/PULL_REQUEST_TEMPLATE/dev-to-main.md`
   - Injects auto-generated commit list.
 
@@ -87,38 +87,4 @@ North star definition:
 - Stable release publication is automated only when all release gates are green.
 - No single human step can bypass required quality/safety checks.
 
-### Required Guardrails (Recommended)
-1. Branch protection on `dev` and `main`
-- Require status checks: `CI`, `Secret Scanning`, `Perf Bench`.
-- Require up-to-date branch before merge.
-- Disable direct pushes to `main`.
-
-2. Re-enable Design Contracts as blocking
-- Fix current validator false positives/real violations.
-- Make workflow required before merge.
-
-3. Make performance policy explicit
-- Option A: keep non-blocking but require manual ack.
-- Option B (north star): block on regression threshold for key metrics.
-
-4. Automate final release from `main` merge/tag policy
-- Add a controlled release gate job:
-  - verifies `main` commit came from merged `dev -> main` PR
-  - verifies all required checks passed on merge commit
-  - creates semver tag automatically (or via manual approval environment)
-
-5. Version governance
-- Enforce version bump policy in `dev -> main` PR (e.g., `package.json` bump required).
-- Validate tag/version consistency.
-
-6. Release provenance
-- Attach SBOM/attestations and immutable artifacts to release.
-- Keep release notes generated from merged PRs + machine-readable manifest.
-
-## Immediate Next Steps to Reach North Star
-
-1. Re-enable `validate-design.yml` after fixing 7 reported violations.
-2. Turn perf regressions into a protected check (with agreed threshold).
-3. Add branch protection rules for `dev` and `main`.
-4. Add `main-release-gate` workflow that auto-tags after `dev -> main` merge when all checks pass.
-5. Add rollback playbook doc + hotfix workflow path.
+Current policy is implemented by the active workflows listed above; no open in-repo workflow backlog is tracked in this document.
