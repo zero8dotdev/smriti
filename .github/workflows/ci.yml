@@ -56,3 +56,75 @@ jobs:
       - name: Run tests
         # Full cross-platform test matrix for merge branches.
         run: bun test test/
+
+  dev-draft-release:
+    name: Dev Draft Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    needs: test-merge
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Compute dev tag
+        id: tag
+        run: |
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          DEV_TAG="v${BASE_VERSION}-dev.${{ github.run_number }}"
+          echo "dev_tag=${DEV_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Remove previous dev draft releases and tags
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+
+            for (const release of releases) {
+              const isDevTag = /-dev\.\d+$/.test(release.tag_name || "");
+              if (isDevTag && release.draft) {
+                await github.rest.repos.deleteRelease({
+                  owner,
+                  repo,
+                  release_id: release.id,
+                });
+              }
+            }
+
+            const refs = await github.paginate(github.rest.git.listMatchingRefs, {
+              owner,
+              repo,
+              ref: "tags/v",
+              per_page: 100,
+            });
+            for (const ref of refs) {
+              const tagName = ref.ref.replace("refs/tags/", "");
+              if (/-dev\.\d+$/.test(tagName)) {
+                await github.rest.git.deleteRef({
+                  owner,
+                  repo,
+                  ref: `tags/${tagName}`,
+                }).catch(() => {});
+              }
+            }
+
+      - name: Create draft prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.dev_tag }}
+          target_commitish: ${{ github.sha }}
+          name: Dev Draft ${{ steps.tag.outputs.dev_tag }}
+          generate_release_notes: true
+          draft: true
+          prerelease: true
