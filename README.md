@@ -221,6 +221,18 @@ Claude Code    Cursor    Codex    Other Agents
 Everything runs locally. Your conversations never leave your machine. The SQLite
 database, the embeddings, the search indexes — all on disk, all yours.
 
+## Ingest Architecture
+
+Smriti ingest uses a layered pipeline:
+
+1. `parsers/*` extract agent transcripts into normalized messages (no DB writes).
+2. `session-resolver` derives project/session state, including incremental offsets.
+3. `store-gateway` persists messages, sidecars, session meta, and costs.
+4. `ingest/index.ts` orchestrates the flow with per-session error isolation.
+
+This keeps parser logic, resolution logic, and persistence logic separated and testable.
+See `INGEST_ARCHITECTURE.md` and `src/ingest/README.md` for implementation details.
+
 ## Tagging & Categories
 
 Sessions and messages are automatically tagged into a hierarchical category
