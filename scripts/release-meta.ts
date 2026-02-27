@@ -171,6 +171,7 @@ function main() {
   const fromTagArg = arg("--from-tag");
   const currentTag = arg("--current-tag");
   const githubOutput = arg("--github-output");
+  const allowInvalid = process.argv.includes("--allow-invalid");
 
   const fromTag = fromTagArg || getLatestStableTag(currentTag || undefined);
   const rangeFrom = fromRefArg || fromTag;
@@ -221,7 +222,7 @@ function main() {
     Bun.write(githubOutput, `${lines.join("\n")}\n`);
   }
 
-  if (invalid.length > 0) {
+  if (invalid.length > 0 && !allowInvalid) {
     console.error("Non-conventional commits detected:");
     for (const c of invalid) {
       console.error(`- ${c.sha.slice(0, 7)} ${c.subject}`);
