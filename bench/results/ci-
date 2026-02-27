@@ -1,0 +1,33 @@
+{
+  "profile": "ci-small",
+  "mode": "no-llm",
+  "generated_at": "2026-02-27T09:29:58.917Z",
+  "db_path": "/var/folders/j1/s6qncpk92jz_10cmv04m338r0000gn/T/smriti-bench-eEc2Yu/bench.sqlite",
+  "corpus": {
+    "sessions": 40,
+    "messages_per_session": 10,
+    "total_messages": 400
+  },
+  "metrics": {
+    "ingest_throughput_msgs_per_sec": 865.18,
+    "ingest_p95_ms_per_session": 16.656,
+    "fts": {
+      "p50_ms": 0.369,
+      "p95_ms": 0.397,
+      "mean_ms": 0.371,
+      "runs": 30
+    },
+    "recall": {
+      "p50_ms": 0.393,
+      "p95_ms": 0.415,
+      "mean_ms": 0.393,
+      "runs": 30
+    },
+    "vector": null
+  },
+  "counts": {
+    "memory_sessions": 40,
+    "memory_messages": 400,
+    "content_vectors": 0
+  }
+}
