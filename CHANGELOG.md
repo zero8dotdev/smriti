@@ -8,6 +8,14 @@ All notable changes to smriti are documented here. Format:
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-02-27
+
+### Fixed
+
+- **Copilot/Cline FK constraint** — `smriti ingest copilot` and `smriti ingest cline`
+  failed with `FOREIGN KEY constraint failed` on clean databases because `copilot` and
+  `cline` were missing from the default agents seed data. (#30)
+
 ## [0.3.1] - 2026-02-25
 
 ### Fixed
@@ -170,6 +178,9 @@ iteration." By 21:07 IST, three separate bugs were identified and fixed in under
 - Auto-save hook for Claude Code sessions
 - One-command install (`install.sh`) and uninstall (`uninstall.sh`)
 
-[Unreleased]: https://github.com/zero8dotdev/smriti/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/zero8dotdev/smriti/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/zero8dotdev/smriti/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/zero8dotdev/smriti/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/zero8dotdev/smriti/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/zero8dotdev/smriti/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/zero8dotdev/smriti/releases/tag/v0.1.0
