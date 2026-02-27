@@ -3,8 +3,6 @@ name: Commit Lint
 on:
   pull_request:
     branches: [main, dev]
-  push:
-    branches: [dev, "feature/**"]
 
 jobs:
   lint:
@@ -23,18 +21,9 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Lint commits (PR)
-        if: github.event_name == 'pull_request'
+      - name: Lint commits (PR range)
         run: |
           bun run scripts/release-meta.ts \
             --mode lint \
             --from-ref "${{ github.event.pull_request.base.sha }}" \
             --to "${{ github.event.pull_request.head.sha }}"
-
-      - name: Lint commits (push)
-        if: github.event_name == 'push'
-        run: |
-          bun run scripts/release-meta.ts \
-            --mode lint \
-            --from-ref "${{ github.event.before }}" \
-            --to "${{ github.sha }}"
