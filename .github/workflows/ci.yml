@@ -12,7 +12,9 @@ on:
 
 jobs:
   test-pr:
-    if: github.event_name == 'pull_request'
+    if: >
+      github.event_name == 'pull_request' &&
+      !(github.event.pull_request.head.ref == 'dev' && github.event.pull_request.base.ref == 'main')
     name: PR / Tests (ubuntu)
     runs-on: ubuntu-latest
 
