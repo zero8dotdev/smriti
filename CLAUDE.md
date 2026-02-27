@@ -34,13 +34,16 @@ src/
 ├── qmd.ts                # Centralized re-exports from QMD package
 ├── format.ts             # Output formatting (JSON, CSV, CLI)
 ├── ingest/
-│   ├── index.ts          # Ingest orchestrator + types
-│   ├── claude.ts         # Claude Code JSONL parser + project detection
-│   ├── codex.ts          # Codex CLI parser
-│   ├── cursor.ts         # Cursor IDE parser
-│   ├── cline.ts          # Cline CLI parser (enriched blocks)
-│   ├── copilot.ts        # GitHub Copilot (VS Code) parser
-│   └── generic.ts        # File import (chat/jsonl formats)
+│   ├── index.ts          # Orchestrator (parser -> resolver -> store)
+│   ├── parsers/          # Pure agent parsers (no DB writes)
+│   ├── session-resolver.ts  # Project/session resolution + incremental state
+│   ├── store-gateway.ts  # Centralized ingest persistence
+│   ├── claude.ts         # Discovery + compatibility wrapper
+│   ├── codex.ts          # Discovery + compatibility wrapper
+│   ├── cursor.ts         # Discovery + compatibility wrapper
+│   ├── cline.ts          # Discovery + compatibility wrapper
+│   ├── copilot.ts        # Discovery + compatibility wrapper
+│   └── generic.ts        # File import compatibility wrapper
 ├── search/
 │   ├── index.ts          # Filtered FTS search + session listing
 │   └── recall.ts         # Recall with synthesis
@@ -95,11 +98,13 @@ get a clean name like `openfga`.
 
 ### Ingestion Pipeline
 
-1. Discover sessions (glob for JSONL/JSON files)
-2. Deduplicate against `smriti_session_meta`
-3. Parse agent-specific format → `ParsedMessage[]`
-4. Save via QMD's `addMessage()` (content-addressable, SHA256 hashed)
-5. Attach Smriti metadata (agent, project, categories)
+1. Discover sessions (agent modules)
+2. Parse session content (pure parser layer)
+3. Resolve project/session state (resolver layer)
+4. Store message/meta/sidecars/costs (store gateway)
+5. Aggregate results and continue on per-session errors (orchestrator)
+
+See `INGEST_ARCHITECTURE.md` for details.
 
 ### Search
 
