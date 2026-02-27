@@ -87,7 +87,7 @@ jobs:
       - name: Compute dev tag
         id: meta
         run: |
-          bun run scripts/release-meta.ts --github-output "$GITHUB_OUTPUT"
+          bun run scripts/release-meta.ts --allow-invalid --github-output "$GITHUB_OUTPUT"
           DEV_TAG="${{ steps.meta.outputs.next_version }}-dev.${{ github.run_number }}"
           echo "dev_tag=${DEV_TAG}" >> "$GITHUB_OUTPUT"
 
