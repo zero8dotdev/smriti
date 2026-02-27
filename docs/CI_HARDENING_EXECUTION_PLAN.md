@@ -1,4 +1,4 @@
-# CI Hardening Execution Plan (Codex-Executable)
+# CI Hardening Execution State
 
 Last updated: 2026-02-27
 
@@ -30,38 +30,6 @@ No bad release should be publishable without:
 2. semver consistency,
 3. conventional commit compliance,
 4. deterministic release notes from the actual commit set.
-
-## Codex Autonomous Backlog
-
-### P0: Protection and Determinism
-1. Enforce required checks in branch protection (`dev`, `main`):
-   - `CI`, `Secret Scanning`, `Commit Lint`, `Perf Bench`
-   - Acceptance: merge blocked when any required check fails.
-2. Pin all workflow actions by full commit SHA.
-   - Acceptance: no `uses: owner/action@v*` references remain.
-3. Add release environment protection for stable tags.
-   - Acceptance: stable release requires approval or protected actor policy.
-
-### P1: Semver Governance
-1. Add PR comment bot that posts computed bump (`major/minor/patch/none`) from `release-meta.ts`.
-   - Acceptance: every PR has visible bump preview.
-2. Add `dev->main` gate: if computed bump is `none`, block release PR merge unless override label exists.
-   - Acceptance: accidental no-op releases prevented.
-
-### P2: Performance and Reliability
-1. Turn perf compare into policy mode (warning vs blocking by branch).
-   - `dev`: warning, `main`: blocking for selected metrics.
-   - Acceptance: regression beyond threshold blocks promotion to `main`.
-2. Upload release-meta output (`json`) as artifact for traceability.
-   - Acceptance: each CI run has machine-readable release metadata.
-
-### P3: Observability and Recovery
-1. Add workflow summary sections for:
-   - computed semver,
-   - from-tag/to-ref range,
-   - invalid commit count.
-2. Add rollback playbook doc + one-click rollback workflow (`workflow_dispatch`) for latest tag.
-   - Acceptance: tested rollback path exists.
 
 ## Operating Rules
 - Merge strategy for protected branches should preserve conventional commit subjects
