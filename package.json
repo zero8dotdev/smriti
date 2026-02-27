@@ -14,6 +14,7 @@
     "bench:qmd": "bun run scripts/bench-qmd.ts --profile ci-small --out bench/results/ci-small.json --no-llm",
     "bench:qmd:repeat": "bun run scripts/bench-qmd-repeat.ts --profiles ci-small,small,medium --runs 3 --out bench/results/repeat-summary.json",
     "bench:compare": "bun run scripts/bench-compare.ts --baseline bench/baseline.ci-small.json --current bench/results/ci-small.json --threshold 0.2",
+    "bench:scorecard": "bun run scripts/bench-scorecard.ts --baseline bench/baseline.ci-small.json --profile ci-small --threshold-pct 20",
     "bench:ingest-hotpaths": "bun run scripts/bench-ingest-hotpaths.ts",
     "bench:ingest-pipeline": "bun run scripts/bench-ingest-pipeline.ts --sessions 120 --messages 12"
   },
