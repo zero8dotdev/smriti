@@ -30,7 +30,7 @@ jobs:
 
             const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
             const version = pkg.version || "0.0.0";
-            const title = `release: v${version} (dev -> main)`;
+            const title = `release: v${version}`;
 
             const commits = await github.paginate(github.rest.pulls.listCommits, {
               owner,
@@ -48,10 +48,21 @@ jobs:
                 `<!-- AUTO-GENERATED:COMMITS -->\n${commitsText}\n<!-- /AUTO-GENERATED:COMMITS -->`
               );
 
+            const existingBody = context.payload.pull_request.body || "";
+            const preserveManual = /<!-- AUTO-GENERATED:COMMITS -->[\s\S]*?<!-- \/AUTO-GENERATED:COMMITS -->/m.test(existingBody);
+            const nextBody = preserveManual
+              ? existingBody
+                  .replace(/- Version: .*/m, `- Version: v${version}`)
+                  .replace(
+                    /<!-- AUTO-GENERATED:COMMITS -->[\s\S]*?<!-- \/AUTO-GENERATED:COMMITS -->/m,
+                    `<!-- AUTO-GENERATED:COMMITS -->\n${commitsText}\n<!-- /AUTO-GENERATED:COMMITS -->`
+                  )
+              : body;
+
             await github.rest.pulls.update({
               owner,
               repo,
               pull_number,
               title,
-              body,
+              body: nextBody,
             });
