@@ -63,6 +63,7 @@ async function ingestParsedSessions(
     skipped: 0,
     errors: [],
   };
+  const useSessionTxn = process.env.SMRITI_INGEST_SESSION_TXN !== "0";
 
   for (const session of sessions) {
     if (!options.incremental && options.existingSessionIds.has(session.sessionId)) {
@@ -95,65 +96,72 @@ async function ingestParsedSessions(
         continue;
       }
 
-      for (const msg of messagesToIngest) {
-        const content = isStructuredMessage(msg) ? msg.plainText || "(structured content)" : msg.content;
-        const messageOptions = isStructuredMessage(msg)
-          ? {
-              title: parsed.session.title,
-              metadata: {
-                ...msg.metadata,
-                blocks: msg.blocks,
-              },
-            }
-          : { title: parsed.session.title };
+      if (useSessionTxn) db.exec("BEGIN IMMEDIATE");
+      try {
+        for (const msg of messagesToIngest) {
+          const content = isStructuredMessage(msg) ? msg.plainText || "(structured content)" : msg.content;
+          const messageOptions = isStructuredMessage(msg)
+            ? {
+                title: parsed.session.title,
+                metadata: {
+                  ...msg.metadata,
+                  blocks: msg.blocks,
+                },
+              }
+            : { title: parsed.session.title };
 
-        const stored = await storeMessage(db, session.sessionId, msg.role, content, messageOptions);
-        if (!stored.success) {
-          throw new Error(stored.error || "Failed to store message");
-        }
+          const stored = await storeMessage(db, session.sessionId, msg.role, content, messageOptions);
+          if (!stored.success) {
+            throw new Error(stored.error || "Failed to store message");
+          }
 
-        if (isStructuredMessage(msg)) {
-          storeBlocks(
-            db,
-            stored.messageId,
-            session.sessionId,
-            resolved.projectId,
-            msg.blocks,
-            msg.timestamp || new Date().toISOString()
-          );
-
-          if (msg.metadata.tokenUsage) {
-            const u = msg.metadata.tokenUsage;
-            storeCosts(
+          if (isStructuredMessage(msg)) {
+            storeBlocks(
               db,
+              stored.messageId,
               session.sessionId,
-              msg.metadata.model || null,
-              u.input,
-              u.output,
-              (u.cacheCreate || 0) + (u.cacheRead || 0),
-              0
+              resolved.projectId,
+              msg.blocks,
+              msg.timestamp || new Date().toISOString()
             );
-          }
 
-          for (const block of msg.blocks) {
-            if (
-              block.type === "system_event" &&
-              block.eventType === "turn_duration" &&
-              typeof block.data.durationMs === "number"
-            ) {
-              storeCosts(db, session.sessionId, null, 0, 0, 0, block.data.durationMs as number);
+            if (msg.metadata.tokenUsage) {
+              const u = msg.metadata.tokenUsage;
+              storeCosts(
+                db,
+                session.sessionId,
+                msg.metadata.model || null,
+                u.input,
+                u.output,
+                (u.cacheCreate || 0) + (u.cacheRead || 0),
+                0
+              );
+            }
+
+            for (const block of msg.blocks) {
+              if (
+                block.type === "system_event" &&
+                block.eventType === "turn_duration" &&
+                typeof block.data.durationMs === "number"
+              ) {
+                storeCosts(db, session.sessionId, null, 0, 0, 0, block.data.durationMs as number);
+              }
             }
           }
         }
-      }
 
-      storeSession(
-        db,
-        session.sessionId,
-        agentId,
-        resolved.projectId,
-        resolved.projectPath
-      );
+        storeSession(
+          db,
+          session.sessionId,
+          agentId,
+          resolved.projectId,
+          resolved.projectPath
+        );
+        if (useSessionTxn) db.exec("COMMIT");
+      } catch (err) {
+        if (useSessionTxn) db.exec("ROLLBACK");
+        throw err;
+      }
 
       result.sessionsIngested++;
       result.messagesIngested += messagesToIngest.length;
