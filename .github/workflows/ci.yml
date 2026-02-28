@@ -143,3 +143,77 @@ jobs:
           generate_release_notes: false
           draft: true
           prerelease: true
+
+  auto-release:
+    name: Push(main) / Auto Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test-merge
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Check if already tagged
+        id: check
+        run: |
+          # Skip if this commit already has a stable version tag
+          for tag in $(git tag --points-at HEAD 2>/dev/null); do
+            if echo "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "Commit already tagged as $tag, skipping."
+              exit 0
+            fi
+          done
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Bun
+        if: steps.check.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        if: steps.check.outputs.skip != 'true'
+        run: bun install
+
+      - name: Compute release metadata
+        if: steps.check.outputs.skip != 'true'
+        id: meta
+        run: |
+          bun run scripts/release-meta.ts --allow-invalid --github-output "$GITHUB_OUTPUT"
+
+          # Squash merges lose individual commit types, so if bump is
+          # "none" but there are unreleased commits, default to patch.
+          BUMP=$(grep '^bump=' "$GITHUB_OUTPUT" | cut -d= -f2)
+          COUNT=$(grep '^commit_count=' "$GITHUB_OUTPUT" | cut -d= -f2)
+          if [ "$BUMP" = "none" ] && [ "$COUNT" -gt 0 ]; then
+            echo "Bump was 'none' with $COUNT commits — overriding to 'patch'"
+            LATEST=$(git tag --list 'v*.*.*' --sort=-version:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            if [ -n "$LATEST" ]; then
+              IFS='.' read -r MAJ MIN PAT <<< "${LATEST#v}"
+              NEXT="v${MAJ}.${MIN}.$((PAT + 1))"
+            else
+              NEXT="v0.1.0"
+            fi
+            echo "next_version=${NEXT}" >> "$GITHUB_OUTPUT"
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.check.outputs.skip != 'true' && steps.meta.outputs.bump != 'none'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.next_version }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.meta.outputs.next_version }}
+          body: ${{ steps.meta.outputs.release_notes }}
+          generate_release_notes: false
+          draft: false
+          prerelease: false
