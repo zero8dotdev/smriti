@@ -6,18 +6,15 @@
  */
 
 import { OLLAMA_HOST, OLLAMA_MODEL, SMRITI_DIR } from "../config";
-import { join, dirname, basename } from "path";
+import { join } from "path";
 import type { KnowledgeUnit, DocumentationOptions, DocumentGenerationResult } from "./types";
-import { existsSync } from "fs";
+
 
 // =============================================================================
 // Template Loading
 // =============================================================================
 
-const BUILT_IN_TEMPLATES_DIR = join(
-  dirname(new URL(import.meta.url).pathname),
-  "prompts"
-);
+const BUILT_IN_TEMPLATES_DIR = join(import.meta.dir, "prompts");
 
 /**
  * Get the Stage 2 prompt template for a category
