@@ -4,6 +4,7 @@ You are documenting code implementation work.
 
 ## Knowledge Unit
 
+**Title**: {{title}}
 **Topic**: {{topic}}
 **Category**: {{category}}
 **Entities**: {{entities}}
@@ -23,4 +24,5 @@ Transform this into a code implementation guide with these sections:
 4. **Usage Example** - Brief example of how to use this code
 5. **Related Code** - Links to similar implementations or dependencies
 
+Start with a `# Heading` using the title above.
 Return only the markdown body, no frontmatter. Include brief code snippets if helpful.

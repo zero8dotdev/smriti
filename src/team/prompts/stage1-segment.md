@@ -28,7 +28,10 @@ Valid categories are:
 - `topic/learning` - Learning and tutorials
 - `topic/explanation` - Explanations and deep dives
 - `decision/technical` - Technical decisions
-- Other valid category combinations with parent/child structure
+- `decision/tooling` - Tooling decisions
+- `project/dependency` - Dependencies and package management
+
+Use ONLY the categories listed above. Do not invent new categories.
 
 ## Conversation
 
