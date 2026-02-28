@@ -4,6 +4,7 @@ You are transforming a technical knowledge unit into a polished, team-friendly d
 
 ## Knowledge Unit
 
+**Title**: {{title}}
 **Topic**: {{topic}}
 **Category**: {{category}}
 **Entities**: {{entities}}
@@ -21,5 +22,6 @@ Transform this knowledge unit into clear, concise documentation that:
 3. Uses clear section headers and formatting
 4. Extracts actionable insights
 
+Start with a `# Heading` using the title above.
 Provide a well-structured markdown document suitable for team knowledge sharing.
 Do not include frontmatter or YAML, just the markdown body.

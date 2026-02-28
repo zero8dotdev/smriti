@@ -2,12 +2,13 @@
  * test/team-segmented.test.ts - Tests for 3-stage segmentation pipeline
  */
 
-import { test, expect, beforeAll, afterAll } from "bun:test";
+import { test, expect, beforeAll, afterAll, mock } from "bun:test";
 import { initSmriti, closeDb, getDb } from "../src/db";
 import type { Database } from "bun:sqlite";
 import type { RawMessage } from "../src/team/formatter";
 import { segmentSession, fallbackToSingleUnit } from "../src/team/segment";
 import { generateDocument, generateDocumentsSequential } from "../src/team/document";
+import { isValidCategory } from "../src/categorize/schema";
 import type { KnowledgeUnit } from "../src/team/types";
 
 // =============================================================================
@@ -125,58 +126,119 @@ test("KnowledgeUnit has valid schema", () => {
 });
 
 // =============================================================================
-// Documentation Generation Tests
+// Documentation Generation Tests (with mocked Ollama)
 // =============================================================================
 
-test("generateDocument creates valid result", async () => {
-  const unit: KnowledgeUnit = {
-    id: "unit-test-1",
-    topic: "Token expiry bug fix",
-    category: "bug/fix",
-    relevance: 8,
-    entities: ["JWT", "Authentication"],
-    files: ["src/auth.ts"],
-    plainText: "Fixed token expiry by reading from environment variable",
-    lineRanges: [{ start: 0, end: 5 }],
-  };
+test("generateDocument creates valid result with mocked Ollama", async () => {
+  // Mock fetch to return a realistic Ollama response
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () =>
+    new Response(
+      JSON.stringify({
+        response: "# Token Expiry Bug Fix\n\n## Symptoms\nSessions expired after 1 hour.\n\n## Root Cause\nHardcoded TTL of 3600s.",
+      }),
+      { status: 200 }
+    )
+  );
 
-  // Mock Ollama to avoid network calls in tests
-  // For now, just validate the structure
-  const title = "Token Expiry Bug Fix";
+  try {
+    const unit: KnowledgeUnit = {
+      id: "unit-test-1",
+      topic: "Token expiry bug fix",
+      category: "bug/fix",
+      relevance: 8,
+      entities: ["JWT", "Authentication"],
+      files: ["src/auth.ts"],
+      plainText: "Fixed token expiry by reading from environment variable",
+      lineRanges: [{ start: 0, end: 5 }],
+    };
 
-  // Check that we can create a document result structure
-  expect(unit.id).toBeDefined();
-  expect(unit.category).toBe("bug/fix");
+    const result = await generateDocument(unit, "Token Expiry Bug Fix");
+
+    expect(result.unitId).toBe("unit-test-1");
+    expect(result.category).toBe("bug/fix");
+    expect(result.title).toBe("Token Expiry Bug Fix");
+    expect(result.markdown).toContain("Token Expiry Bug Fix");
+    expect(result.filename).toMatch(/^\d{4}-\d{2}-\d{2}_token-expiry-bug-fix\.md$/);
+    expect(result.tokenEstimate).toBeGreaterThan(0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test("generateDocumentsSequential processes units in order", async () => {
-  const units: KnowledgeUnit[] = [
-    {
-      id: "unit-1",
-      topic: "First unit",
-      category: "code/implementation",
-      relevance: 7,
-      entities: ["TypeScript"],
-      files: ["src/main.ts"],
-      plainText: "First unit content",
-      lineRanges: [{ start: 0, end: 2 }],
-    },
-    {
-      id: "unit-2",
-      topic: "Second unit",
-      category: "architecture/decision",
-      relevance: 8,
-      entities: ["Database"],
-      files: ["src/db.ts"],
-      plainText: "Second unit content",
-      lineRanges: [{ start: 3, end: 5 }],
-    },
-  ];
+test("generateDocumentsSequential processes units in order with mocked Ollama", async () => {
+  let callOrder = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () => {
+    callOrder++;
+    return new Response(
+      JSON.stringify({
+        response: `# Document ${callOrder}\n\nContent for document ${callOrder}.`,
+      }),
+      { status: 200 }
+    );
+  });
 
-  // Verify units are distinct
-  expect(units[0].id).not.toBe(units[1].id);
-  expect(units[0].category).not.toBe(units[1].category);
-  expect(units.length).toBe(2);
+  try {
+    const units: KnowledgeUnit[] = [
+      {
+        id: "unit-1",
+        topic: "First unit",
+        category: "code/implementation",
+        relevance: 7,
+        entities: ["TypeScript"],
+        files: ["src/main.ts"],
+        plainText: "First unit content",
+        lineRanges: [{ start: 0, end: 2 }],
+      },
+      {
+        id: "unit-2",
+        topic: "Second unit",
+        category: "architecture/decision",
+        relevance: 8,
+        entities: ["Database"],
+        files: ["src/db.ts"],
+        plainText: "Second unit content",
+        lineRanges: [{ start: 3, end: 5 }],
+      },
+    ];
+
+    const results = await generateDocumentsSequential(units);
+
+    expect(results.length).toBe(2);
+    expect(results[0].unitId).toBe("unit-1");
+    expect(results[1].unitId).toBe("unit-2");
+    expect(results[0].category).toBe("code/implementation");
+    expect(results[1].category).toBe("architecture/decision");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("generateDocument falls back to plainText on Ollama failure", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () => {
+    throw new Error("Connection refused");
+  });
+
+  try {
+    const unit: KnowledgeUnit = {
+      id: "unit-fallback",
+      topic: "Fallback test",
+      category: "topic/learning",
+      relevance: 7,
+      entities: [],
+      files: [],
+      plainText: "This is the raw content that should appear as fallback",
+      lineRanges: [{ start: 0, end: 1 }],
+    };
+
+    const result = await generateDocument(unit, "Fallback Test");
+
+    expect(result.markdown).toContain("raw content that should appear as fallback");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 // =============================================================================
@@ -258,10 +320,10 @@ test("Custom relevance threshold filters correctly", () => {
 });
 
 // =============================================================================
-// Category Validation Tests
+// Category Validation Tests (using real DB)
 // =============================================================================
 
-test("Valid categories pass validation", () => {
+test("Valid categories pass DB validation", () => {
   const validCategories = [
     "bug/fix",
     "architecture/decision",
@@ -273,17 +335,14 @@ test("Valid categories pass validation", () => {
   ];
 
   for (const cat of validCategories) {
-    // Should not throw
-    expect(cat.length > 0).toBe(true);
+    expect(isValidCategory(db, cat)).toBe(true);
   }
 });
 
-test("Invalid categories fallback gracefully", () => {
-  const invalidCategory = "made/up/invalid/category";
-
-  // In real implementation, this would validate against DB
-  // For test, just verify the structure handles it
-  expect(typeof invalidCategory).toBe("string");
+test("Invalid categories are rejected by DB validation", () => {
+  expect(isValidCategory(db, "made/up/invalid/category")).toBe(false);
+  expect(isValidCategory(db, "nonexistent")).toBe(false);
+  expect(isValidCategory(db, "")).toBe(false);
 });
 
 // =============================================================================
