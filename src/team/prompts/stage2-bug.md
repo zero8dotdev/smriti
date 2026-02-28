@@ -4,6 +4,7 @@ You are documenting a bug investigation or fix.
 
 ## Knowledge Unit
 
+**Title**: {{title}}
 **Topic**: {{topic}}
 **Category**: {{category}}
 **Entities**: {{entities}}
@@ -23,4 +24,5 @@ Transform this bug knowledge into a structured incident/fix document with these 
 4. **Fix** - What changed and why that fixes it
 5. **Prevention** - How to avoid this in future (tests, checks, architecture)
 
+Start with a `# Heading` using the title above.
 Return only the markdown body, no frontmatter. Use clear headings and be concise.

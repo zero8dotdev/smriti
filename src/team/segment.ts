@@ -6,11 +6,12 @@
  * documented independently.
  */
 
-import { OLLAMA_HOST, OLLAMA_MODEL } from "../config";
 import { join } from "path";
 import type { Database } from "bun:sqlite";
 import type { RawMessage } from "./formatter";
-import { filterMessages, mergeConsecutive, sanitizeContent } from "./formatter";
+import { filterMessages, mergeConsecutive } from "./formatter";
+import { callOllama } from "./ollama";
+import { isValidCategory } from "../categorize/schema";
 import type {
   KnowledgeUnit,
   SegmentationResult,
@@ -78,8 +79,19 @@ function extractSessionMetadata(
     ? "Tests run"
     : "No tests recorded";
 
-  // Calculate duration
-  const duration = messages.length > 0 ? Math.ceil(messages.length / 2) : 0;
+  // Calculate duration from message timestamps
+  const msgTimestamps = db
+    .prepare(
+      `SELECT MIN(created_at) as first_at, MAX(created_at) as last_at
+       FROM memory_messages WHERE session_id = ?`
+    )
+    .get(sessionId) as { first_at: string | null; last_at: string | null } | null;
+
+  let duration = 0;
+  if (msgTimestamps?.first_at && msgTimestamps?.last_at) {
+    const diffMs = new Date(msgTimestamps.last_at).getTime() - new Date(msgTimestamps.first_at).getTime();
+    duration = Math.max(1, Math.ceil(diffMs / 60_000));
+  }
 
   return {
     duration_minutes: String(duration),
@@ -159,23 +171,17 @@ function parseSegmentationResponse(text: string): RawSegmentationUnit[] {
 // =============================================================================
 
 /**
- * Validate and normalize a category against known taxonomy
+ * Validate and normalize a category against known taxonomy.
+ * Falls back to parent category, then "uncategorized".
  */
 function validateCategory(db: Database, category: string): string {
-  const valid = db
-    .prepare(`SELECT id FROM smriti_categories WHERE id = ?`)
-    .get(category) as { id: string } | null;
-
-  if (valid) return category;
+  if (isValidCategory(db, category)) return category;
 
   // Try parent category
   const parts = category.split("/");
   if (parts.length > 1) {
     const parent = parts[0];
-    const parentValid = db
-      .prepare(`SELECT id FROM smriti_categories WHERE id = ?`)
-      .get(parent) as { id: string } | null;
-    if (parentValid) return parent;
+    if (isValidCategory(db, parent)) return parent;
   }
 
   return "uncategorized";
@@ -254,7 +260,7 @@ export async function segmentSession(
   let units: KnowledgeUnit[] = [];
 
   try {
-    const response = await callOllama(prompt, options.model);
+    const response = await callOllama(prompt, { model: options.model });
     const rawUnits = parseSegmentationResponse(response);
     units = normalizeUnits(rawUnits, db, messages);
   } catch (err) {
@@ -316,35 +322,4 @@ export function fallbackToSingleUnit(
     totalMessages: messages.length,
     processingDurationMs: 0,
   };
-}
-
-// =============================================================================
-// Ollama Integration
-// =============================================================================
-
-/**
- * Call Ollama generate API
- */
-async function callOllama(prompt: string, model?: string): Promise<string> {
-  const ollamaModel = model || OLLAMA_MODEL;
-
-  const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: ollamaModel,
-      prompt,
-      stream: false,
-      temperature: 0.7,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Ollama API error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const data = (await response.json()) as { response: string };
-  return data.response || "";
 }

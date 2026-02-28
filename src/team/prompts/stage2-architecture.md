@@ -4,6 +4,7 @@ You are documenting an architecture or technical decision.
 
 ## Knowledge Unit
 
+**Title**: {{title}}
 **Topic**: {{topic}}
 **Category**: {{category}}
 **Entities**: {{entities}}
@@ -23,4 +24,5 @@ Transform this into an Architecture Decision Record (ADR) format with these sect
 4. **Consequences** - Positive impacts and tradeoffs
 5. **Rationale** - Deeper reasoning or constraints
 
+Start with a `# Heading` using the title above.
 Return only the markdown body, no frontmatter. Be concise but thorough on tradeoffs.
