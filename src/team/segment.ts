@@ -7,7 +7,7 @@
  */
 
 import { OLLAMA_HOST, OLLAMA_MODEL } from "../config";
-import { join, dirname } from "path";
+import { join } from "path";
 import type { Database } from "bun:sqlite";
 import type { RawMessage } from "./formatter";
 import { filterMessages, mergeConsecutive, sanitizeContent } from "./formatter";
@@ -21,7 +21,7 @@ import type {
 // Prompt Loading
 // =============================================================================
 
-const PROMPT_PATH = join(dirname(new URL(import.meta.url).pathname), "prompts", "stage1-segment.md");
+const PROMPT_PATH = join(import.meta.dir, "prompts", "stage1-segment.md");
 
 async function loadSegmentationPrompt(): Promise<string> {
   const file = Bun.file(PROMPT_PATH);
