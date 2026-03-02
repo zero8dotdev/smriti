@@ -43,3 +43,13 @@ temp/
 .smriti/CLAUDE.md
 .smriti/knowledge/
 .smriti/index.json
+
+# Personal writing / local-only notes
+docs/writing/
+
+# Letta Code agent state
+.letta/
+
+# Zsh plugins (should not be in project repo)
+zsh-autosuggestions/
+zsh-syntax-highlighting/
