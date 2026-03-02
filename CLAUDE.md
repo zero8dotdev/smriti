@@ -104,7 +104,7 @@ get a clean name like `openfga`.
 4. Store message/meta/sidecars/costs (store gateway)
 5. Aggregate results and continue on per-session errors (orchestrator)
 
-See `INGEST_ARCHITECTURE.md` for details.
+See `docs/internal/ingest-architecture.md` for details.
 
 ### Search
 
