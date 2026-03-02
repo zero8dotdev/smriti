@@ -299,7 +299,7 @@ works cross-project by default, scoped with `--project <id>`.
 git-native today. Issue tracker integrations are on the roadmap.
 
 **Further reading:** See [docs/cli.md](./docs/cli.md) for the full command
-reference, [INGEST_ARCHITECTURE.md](./INGEST_ARCHITECTURE.md) for the ingestion
+reference, [docs/internal/ingest-architecture.md](./docs/internal/ingest-architecture.md) for the ingestion
 pipeline, and [CLAUDE.md](./CLAUDE.md) for the database schema and
 architecture.
 
