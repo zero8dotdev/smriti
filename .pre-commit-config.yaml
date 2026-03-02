@@ -7,7 +7,7 @@ repos:
         name: Gitleaks - Detect secrets
         entry: gitleaks detect --source . -c .gitleaks.toml
         language: system
-        stages: [commit]
+        stages: [pre-commit]
         pass_filenames: false
         always_run: true
 
