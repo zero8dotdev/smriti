@@ -719,6 +719,31 @@ export function insertError(
   ).run(messageId, sessionId, errorType, message, createdAt);
 }
 
+// Per-million-token pricing by model family
+const MODEL_PRICING: Record<string, { input: number; output: number; cacheRead: number }> = {
+  "claude-opus-4": { input: 15.0, output: 75.0, cacheRead: 1.5 },
+  "claude-sonnet-4": { input: 3.0, output: 15.0, cacheRead: 0.3 },
+  "claude-haiku-4": { input: 0.8, output: 4.0, cacheRead: 0.08 },
+};
+const DEFAULT_PRICING = { input: 3.0, output: 15.0, cacheRead: 0.3 };
+
+export function estimateCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cacheTokens: number
+): number {
+  // Match model family: "claude-sonnet-4-20250514" → "claude-sonnet-4"
+  const family = Object.keys(MODEL_PRICING).find((k) => model.startsWith(k));
+  const pricing = family ? MODEL_PRICING[family] : DEFAULT_PRICING;
+  return (
+    (inputTokens * pricing.input +
+      outputTokens * pricing.output +
+      cacheTokens * pricing.cacheRead) /
+    1_000_000
+  );
+}
+
 export function upsertSessionCosts(
   db: Database,
   sessionId: string,
@@ -728,16 +753,28 @@ export function upsertSessionCosts(
   cacheTokens: number,
   durationMs: number
 ): void {
+  const modelName = model || "unknown";
+  const cost = estimateCost(modelName, inputTokens, outputTokens, cacheTokens);
   db.prepare(
-    `INSERT INTO smriti_session_costs(session_id, model, total_input_tokens, total_output_tokens, total_cache_tokens, turn_count, total_duration_ms)
-  VALUES(?, ?, ?, ?, ?, 1, ?)
+    `INSERT INTO smriti_session_costs(session_id, model, total_input_tokens, total_output_tokens, total_cache_tokens, estimated_cost_usd, turn_count, total_duration_ms)
+  VALUES(?, ?, ?, ?, ?, ?, 1, ?)
      ON CONFLICT(session_id, model) DO UPDATE SET
   total_input_tokens = total_input_tokens + excluded.total_input_tokens,
     total_output_tokens = total_output_tokens + excluded.total_output_tokens,
     total_cache_tokens = total_cache_tokens + excluded.total_cache_tokens,
+    estimated_cost_usd = estimated_cost_usd + excluded.estimated_cost_usd,
     turn_count = turn_count + 1,
     total_duration_ms = total_duration_ms + excluded.total_duration_ms`
-  ).run(sessionId, model || "unknown", inputTokens, outputTokens, cacheTokens, durationMs);
+  ).run(sessionId, modelName, inputTokens, outputTokens, cacheTokens, cost, durationMs);
+}
+
+export function deleteSidecarRows(db: Database, sessionId: string): void {
+  db.prepare(`DELETE FROM smriti_tool_usage WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_file_operations WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_commands WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_errors WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_git_operations WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_session_costs WHERE session_id = ?`).run(sessionId);
 }
 
 export function insertGitOperation(
