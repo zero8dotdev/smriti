@@ -1,17 +1,30 @@
 # Getting Started
 
+You're about to give your AI agents memory.
+
+By the end of this guide, your Claude Code sessions will be automatically
+saved, searchable, and shareable — across sessions, across days, across your
+team.
+
+---
+
 ## Install
+
+**macOS / Linux:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zero8dotdev/smriti/main/install.sh | bash
 ```
 
-The installer will:
-1. Check for (and install) [Bun](https://bun.sh)
-2. Clone Smriti to `~/.smriti`
-3. Install dependencies
-4. Create the `smriti` CLI at `~/.local/bin/smriti`
-5. Set up the Claude Code auto-save hook
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/zero8dotdev/smriti/main/install.ps1 | iex
+```
+
+The installer: checks for Bun (installs it if missing) → clones Smriti to
+`~/.smriti` → creates the `smriti` CLI → sets up the Claude Code auto-save
+hook.
 
 ### Verify
 
@@ -22,33 +35,39 @@ smriti help
 If `smriti` is not found, add `~/.local/bin` to your PATH:
 
 ```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
 ```
+
+---
 
 ## First Run
 
-### 1. Ingest your Claude Code conversations
+### 1. Pull in your Claude Code sessions
 
 ```bash
 smriti ingest claude
 ```
 
-This scans `~/.claude/projects/` for all session transcripts and imports them.
+Scans `~/.claude/projects/` and imports every conversation. On first run this
+might take a moment if you've been coding with Claude for a while.
 
-### 2. Check what was imported
+### 2. See what you have
 
 ```bash
 smriti status
 ```
 
-Output shows session count, message count, and per-agent/per-project breakdowns.
+Session counts, message counts, breakdown by project and agent. This is your
+memory — everything Smriti knows about your past work.
 
-### 3. Search your memory
+### 3. Search it
 
 ```bash
 smriti search "authentication"
 ```
+
+Keyword search across every session. Try something you remember working
+through in a past conversation.
 
 ### 4. Recall with context
 
@@ -56,29 +75,64 @@ smriti search "authentication"
 smriti recall "how did we set up the database"
 ```
 
-This searches, deduplicates by session, and returns the most relevant snippets.
+Like search, but smarter — deduplicates by session and surfaces the most
+relevant snippets. Add `--synthesize` to compress results into a single
+coherent summary (requires Ollama).
 
-### 5. Build embeddings for semantic search
+### 5. Turn on semantic search
 
 ```bash
 smriti embed
 ```
 
-After embedding, searches find semantically similar content — not just keyword matches.
+Builds vector embeddings locally. After this, searches find semantically
+similar content — not just keyword matches. "auth flow" starts surfacing
+results that talk about "login mechanism."
 
-## Auto-Save (Claude Code)
+---
 
-If the installer set up the hook, every Claude Code conversation is saved automatically. No action needed — just code as usual.
+## Auto-Save
 
-To verify the hook is active:
+If the install completed cleanly, you're done — every Claude Code session is
+saved automatically when you end it. No manual step, no copy-pasting.
+
+Verify the hook is active:
 
 ```bash
 cat ~/.claude/settings.json | grep save-memory
 ```
 
+If the hook isn't there, re-run the installer or set it up manually — see
+[Configuration](./configuration.md#claude-code-hook).
+
+---
+
+## Share with Your Team
+
+Once you've built up memory, share the useful parts through git:
+
+```bash
+smriti share --project myapp --category decision
+cd ~/projects/myapp
+git add .smriti/ && git commit -m "Share auth migration decisions"
+git push
+```
+
+A teammate imports it:
+
+```bash
+git pull && smriti sync --project myapp
+smriti recall "auth migration" --project myapp
+```
+
+Their agent now has your context. See [Team Sharing](./team-sharing.md) for
+the full guide.
+
+---
+
 ## Next Steps
 
-- [CLI Reference](./cli.md) — All commands and options
-- [Team Sharing](./team-sharing.md) — Share knowledge via git
-- [Configuration](./configuration.md) — Environment variables and customization
+- [CLI Reference](./cli.md) — Every command and option
+- [Team Sharing](./team-sharing.md) — Share knowledge through git
+- [Configuration](./configuration.md) — Customize paths, models, and behavior
 - [Architecture](./architecture.md) — How Smriti works under the hood
