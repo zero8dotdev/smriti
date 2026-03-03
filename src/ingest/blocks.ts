@@ -37,6 +37,7 @@ export type RawContentBlock = {
   input?: Record<string, any>;
   tool_use_id?: string;
   content?: string | RawContentBlock[];
+  is_error?: boolean;
   source?: { type: string; media_type: string; data: string };
 };
 
@@ -86,15 +87,14 @@ export function parseGitCommand(command: string): GitBlock | null {
     operation,
   };
 
-  // Parse commit message
+  // Parse commit message — check heredoc first (greedy), then simple quoted
   if (operation === "commit") {
-    const msgMatch = command.match(/-m\s+["']([^"']+)["']/);
-    if (!msgMatch) {
-      // Try heredoc style: -m "$(cat <<'EOF'\n...\nEOF\n)"
-      const heredocMatch = command.match(/-m\s+"\$\(cat\s+<<'?EOF'?\n([\s\S]*?)\nEOF/);
-      if (heredocMatch) block.message = heredocMatch[1].trim();
+    const heredocMatch = command.match(/-m\s+"\$\(cat\s+<<'?EOF'?\n([\s\S]*?)\nEOF/);
+    if (heredocMatch) {
+      block.message = heredocMatch[1].trim();
     } else {
-      block.message = msgMatch[1];
+      const msgMatch = command.match(/-m\s+["']([^"']+)["']/);
+      if (msgMatch) block.message = msgMatch[1];
     }
   }
 
@@ -313,12 +313,18 @@ export function parseToolResult(
       .join("\n");
   }
 
+  // Parse exit code from Bash tool output (e.g. "Exit code: 1" or "Exit code 1")
+  let exitCode: number | undefined;
+  const exitMatch = output.match(/^Exit code:?\s*(\d+)/m);
+  if (exitMatch) exitCode = parseInt(exitMatch[1], 10);
+
   return {
     type: "tool_result",
     toolId: toolUseId,
     success: !isError,
     output: truncate(output, STORAGE_LIMITS.commandOutput),
     error: isError ? truncate(output, STORAGE_LIMITS.commandOutput) : undefined,
+    exitCode,
   };
 }
 
@@ -360,7 +366,7 @@ export function rawBlockToMessageBlocks(raw: RawContentBlock): MessageBlock[] {
         parseToolResult(
           raw.tool_use_id || "",
           raw.content,
-          false
+          raw.is_error ?? false
         ),
       ];
 
