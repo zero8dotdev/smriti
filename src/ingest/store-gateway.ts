@@ -18,6 +18,9 @@ export type StoreMessageResult = {
   error?: string;
 };
 
+export type ToolCorrelation = { messageId: number; toolName: string };
+export type ToolCorrelationMap = Map<string, ToolCorrelation>;
+
 export async function storeMessage(
   db: Database,
   sessionId: string,
@@ -39,7 +42,8 @@ export function storeBlocks(
   sessionId: string,
   projectId: string | null,
   blocks: MessageBlock[],
-  createdAt: string
+  createdAt: string,
+  correlationMap?: ToolCorrelationMap
 ): void {
   for (const block of blocks) {
     switch (block.type) {
@@ -54,6 +58,42 @@ export function storeBlocks(
           null,
           createdAt
         );
+        // Register in correlation map for later result matching
+        if (correlationMap && block.toolId) {
+          correlationMap.set(block.toolId, { messageId, toolName: block.toolName });
+        }
+        break;
+      case "tool_result":
+        if (correlationMap && block.toolId) {
+          const corr = correlationMap.get(block.toolId);
+          if (corr) {
+            // Update tool_usage success from actual result
+            db.prepare(
+              `UPDATE smriti_tool_usage SET success = ? WHERE message_id = ? AND session_id = ? AND tool_name = ?`
+            ).run(block.success ? 1 : 0, corr.messageId, sessionId, corr.toolName);
+
+            // Backfill exit code for Bash commands
+            if (corr.toolName === "Bash" && block.exitCode !== undefined) {
+              db.prepare(
+                `UPDATE smriti_commands SET exit_code = ? WHERE message_id = ? AND session_id = ?`
+              ).run(block.exitCode, corr.messageId, sessionId);
+            }
+
+            // Insert error row for failed tools
+            if (!block.success) {
+              insertError(
+                db,
+                corr.messageId,
+                sessionId,
+                "tool_failure",
+                `${corr.toolName}: ${block.error || block.output}`.slice(0, 2000),
+                createdAt
+              );
+            }
+
+            correlationMap.delete(block.toolId);
+          }
+        }
         break;
       case "file_op":
         insertFileOperation(
