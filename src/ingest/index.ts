@@ -325,6 +325,36 @@ export async function ingest(
         force: options.force,
       });
     }
+    case "claude-web": {
+      const { ingestClaudeWeb } = await import("./claude-web");
+      const filePath = options.filePath;
+      if (!filePath) {
+        return {
+          agent: "claude-web",
+          sessionsFound: 0,
+          sessionsIngested: 0,
+          messagesIngested: 0,
+          skipped: 0,
+          errors: ["File path required: smriti ingest claude-web <conversations.json>"],
+        };
+      }
+      return ingestClaudeWeb(db, filePath, baseOptions);
+    }
+    case "claude-web-memory": {
+      const { ingestClaudeWebMemories } = await import("./claude-web");
+      const filePath = options.filePath;
+      if (!filePath) {
+        return {
+          agent: "claude-web",
+          sessionsFound: 0,
+          sessionsIngested: 0,
+          messagesIngested: 0,
+          skipped: 0,
+          errors: ["File path required: smriti ingest claude-web-memory <memories.json>"],
+        };
+      }
+      return ingestClaudeWebMemories(db, filePath, baseOptions);
+    }
     case "file":
     case "generic": {
       if (!options.filePath) {
@@ -365,7 +395,7 @@ export async function ingest(
         sessionsIngested: 0,
         messagesIngested: 0,
         skipped: 0,
-        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, cline, copilot, or file`],
+        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, cline, copilot, claude-web, or file`],
       };
   }
 }
