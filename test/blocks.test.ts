@@ -449,3 +449,95 @@ test("systemEntryToBlock maps pr-link", () => {
   expect(block.eventType).toBe("pr_link");
   expect(block.data.prNumber).toBe(42);
 });
+
+// =============================================================================
+// is_error propagation
+// =============================================================================
+
+test("extractBlocks passes is_error from raw tool_result", () => {
+  const blocks = extractBlocks([
+    {
+      type: "tool_result",
+      tool_use_id: "tool_err",
+      content: "Permission denied",
+      is_error: true,
+    },
+  ]);
+  expect(blocks.length).toBe(1);
+  expect(blocks[0].type).toBe("tool_result");
+  if (blocks[0].type === "tool_result") {
+    expect(blocks[0].success).toBe(false);
+    expect(blocks[0].error).toBe("Permission denied");
+  }
+});
+
+test("extractBlocks defaults is_error to false when not present", () => {
+  const blocks = extractBlocks([
+    {
+      type: "tool_result",
+      tool_use_id: "tool_ok",
+      content: "Success",
+    },
+  ]);
+  expect(blocks.length).toBe(1);
+  if (blocks[0].type === "tool_result") {
+    expect(blocks[0].success).toBe(true);
+    expect(blocks[0].error).toBeUndefined();
+  }
+});
+
+// =============================================================================
+// HEREDOC commit message parsing
+// =============================================================================
+
+test("parseGitCommand extracts HEREDOC commit message", () => {
+  const command = `git commit -m "\$(cat <<'EOF'
+Fix the authentication bug
+
+This resolves the login issue by updating the token validation.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"`;
+  const block = parseGitCommand(command);
+  expect(block).not.toBeNull();
+  expect(block!.operation).toBe("commit");
+  expect(block!.message).toContain("Fix the authentication bug");
+  expect(block!.message).toContain("Co-Authored-By");
+});
+
+test("parseGitCommand prefers HEREDOC over simple quote match", () => {
+  // The -m "$(cat <<'EOF' ... pattern should NOT match as simple quoted
+  const command = `git commit -m "\$(cat <<'EOF'
+Real message here
+EOF
+)"`;
+  const block = parseGitCommand(command);
+  expect(block).not.toBeNull();
+  expect(block!.message).toBe("Real message here");
+  expect(block!.message).not.toContain("$(cat");
+});
+
+// =============================================================================
+// Exit code parsing
+// =============================================================================
+
+test("parseToolResult extracts exit code from output", () => {
+  const result = parseToolResult("t1", "some output\nExit code: 1\nmore output");
+  expect(result.exitCode).toBe(1);
+});
+
+test("parseToolResult extracts exit code without colon", () => {
+  const result = parseToolResult("t1", "Exit code 127");
+  expect(result.exitCode).toBe(127);
+});
+
+test("parseToolResult returns undefined exitCode when not present", () => {
+  const result = parseToolResult("t1", "normal output without exit code");
+  expect(result.exitCode).toBeUndefined();
+});
+
+test("parseToolResult extracts exit code 0", () => {
+  const result = parseToolResult("t1", "Exit code: 0");
+  expect(result.exitCode).toBe(0);
+});

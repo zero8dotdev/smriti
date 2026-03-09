@@ -47,6 +47,7 @@ export type ToolResultBlock = {
   success: boolean;
   output: string;
   error?: string;
+  exitCode?: number;
   durationMs?: number;
 };
 
