@@ -161,7 +161,13 @@ export async function syncTeamKnowledge(
           continue;
         }
 
-        const messages = extractMessages(body);
+        // Segmented pipeline docs don't have **user**/**assistant** patterns;
+        // treat the whole body as a single assistant message.
+        const isSegmented = meta.pipeline === "segmented";
+        const messages = isSegmented
+          ? [{ role: "assistant", content: body.trim() }]
+          : extractMessages(body);
+
         if (messages.length === 0) {
           result.skipped++;
           continue;
