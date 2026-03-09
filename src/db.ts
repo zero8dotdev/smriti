@@ -62,11 +62,20 @@ function initializeQmdStore(db: Database): void {
     )
   `);
 
-  // Create virtual vec table for sqlite-vec
+  // vectors_vec is managed by QMD at embedding time because dimensions depend on
+  // the active embedding model. Do not eagerly create it here.
+  // Migration: older Smriti versions created an incompatible vectors_vec table
+  // (embedding-only, no hash_seq), which breaks embed/search paths.
   try {
-    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vectors_vec USING vec0(embedding float[1536])`);
+    const vecTable = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='vectors_vec'`)
+      .get() as { sql: string } | null;
+
+    if (vecTable?.sql && !vecTable.sql.includes("hash_seq")) {
+      db.exec(`DROP TABLE IF EXISTS vectors_vec`);
+    }
   } catch {
-    // May fail if model doesn't support this dimension, that's OK
+    // If sqlite-vec isn't loaded or table introspection fails, continue.
   }
 }
 
@@ -356,7 +365,7 @@ export function initializeSmritiTables(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_smriti_shares_hash
       ON smriti_shares(content_hash);
     CREATE INDEX IF NOT EXISTS idx_smriti_shares_unit
-      ON smriti_shares(content_hash, unit_id);
+      ON smriti_shares(unit_id);
 
     -- Indexes (sidecar tables)
     CREATE INDEX IF NOT EXISTS idx_smriti_tool_usage_session
