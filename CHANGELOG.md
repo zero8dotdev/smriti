@@ -1,3 +1,16 @@
+## [0.5.1] - 2026-03-09
+
+### Fixed
+
+- fix: add missing cline and copilot to default agents seed
+- fix(install): remove temp HOME isolation breaking PATH dependencies
+
+### Performance
+
+- perf: add caching and optimize Bun install for faster CI workflows
+
+---
+
 ## [0.5.0] - 2026-03-09
 
 ### Added
