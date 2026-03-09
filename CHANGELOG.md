@@ -1,3 +1,22 @@
+## [0.5.0] - 2026-03-09
+
+### Added
+
+- feat(team): harden share pipeline — Ollama client, helper extraction, segmented sync
+- feat(db): model-aware cost estimation and sidecar cleanup (#48)
+
+### Fixed
+
+- fix(share): harden 3-stage pipeline and add demo script
+
+### Documentation
+
+- docs: reorganize documentation structure and improve narrative (#46)
+- docs: overhaul documentation structure and tone (#43)
+- chore: clean up project root (#45)
+
+---
+
 ## [0.4.0] - 2026-02-27
 
 ### Fixed
