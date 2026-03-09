@@ -1,3 +1,18 @@
+## [0.6.0] - 2026-03-09
+
+### Added
+
+- feat(ingest): `--force` flag for re-ingesting sessions (deletes sidecars, re-extracts)
+- feat(db): sidecar content searchable via unified FTS — artifacts, thinking blocks, attachments, voice notes
+- feat(insights): cost & usage analytics module with CLI commands (`smriti insights`)
+
+### Database
+
+- New tables: `smriti_artifacts`, `smriti_thinking`, `smriti_attachments`, `smriti_voice_notes`
+- FTS migration to v2 includes sidecar content
+
+---
+
 ## [0.5.1] - 2026-03-09
 
 ### Fixed
