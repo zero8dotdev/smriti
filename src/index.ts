@@ -24,6 +24,23 @@ import {
   formatCompare,
 } from "./context";
 import {
+  getOverview,
+  getSessionInsights,
+  getProjectInsights,
+  getCostBreakdown,
+  getErrorAnalysis,
+  getToolStats,
+  getRecommendations,
+} from "./insights/index";
+import {
+  formatOverview,
+  formatSessionInsights,
+  formatProjectInsights,
+  formatCostBreakdown,
+  formatErrorAnalysis,
+  formatToolStats,
+} from "./insights/format";
+import {
   formatSessionList,
   formatSearchResults,
   formatStatus,
@@ -91,6 +108,7 @@ Commands:
   show <session-id>            Show session messages
   status                       Memory statistics
   projects                     List projects
+  insights [subcommand]        Cost & usage analysis dashboard
   embed                        Embed new messages for vector search
   upgrade                      Update smriti to the latest version
   help                         Show this help
@@ -103,12 +121,21 @@ Filters (apply to search, recall, list, share):
 
 Ingest options:
   smriti ingest claude         Ingest Claude Code sessions
+  smriti ingest claude-web <conversations.json>  Claude.ai data export
+  smriti ingest claude-web-memory <memories.json> Claude.ai memories
   smriti ingest codex          Ingest Codex CLI sessions
   smriti ingest cline          Ingest Cline CLI sessions
   smriti ingest copilot        Ingest GitHub Copilot (VS Code) sessions
   smriti ingest cursor --project-path <path>
   smriti ingest file <path> [--format chat|jsonl] [--title <t>]
   smriti ingest all            Ingest from all known agents (claude, codex, cline, copilot)
+  --force                      Re-ingest sessions (delete sidecar data, re-extract)
+
+Search content options:
+  --include-thinking           Include thinking blocks in search (opt-in)
+  --no-artifacts               Exclude artifacts from search
+  --no-attachments             Exclude attachments from search
+  --no-voice-notes             Exclude voice notes from search
 
 Recall options:
   --synthesize                 Synthesize results via Ollama
@@ -128,6 +155,14 @@ Share options:
   --segmented                  Use 3-stage segmentation pipeline (beta)
   --min-relevance <float>      Relevance threshold for segmented mode (default: 6)
 
+Insights options:
+  smriti insights                          Full dashboard
+  smriti insights session <id>             Session deep dive
+  smriti insights project <id>             Project analysis
+  smriti insights costs [--days N]         Cost breakdown
+  smriti insights errors [--project <id>]  Error analysis
+  smriti insights tools [--project <id>]   Tool reliability
+
 Examples:
   smriti ingest claude
   smriti ingest copilot
@@ -137,6 +172,7 @@ Examples:
   smriti list --category decision --project myapp
   smriti share --category decision
   smriti sync
+  smriti insights --json
   smriti upgrade
 `;
 
@@ -168,7 +204,7 @@ async function main() {
         const agent = args[1];
         if (!agent) {
           console.error("Usage: smriti ingest <agent>");
-          console.error("Agents: claude, codex, cursor, cline, copilot, file, all");
+          console.error("Agents: claude, codex, cursor, cline, copilot, claude-web, file, all");
           process.exit(1);
         }
 
@@ -191,6 +227,7 @@ async function main() {
           title: getArg(args, "--title"),
           sessionId: getArg(args, "--session"),
           projectId: getArg(args, "--project"),
+          force: hasFlag(args, "--force"),
         });
 
         console.log(formatIngestResult(result));
@@ -212,6 +249,10 @@ async function main() {
           project: getArg(args, "--project"),
           agent: getArg(args, "--agent"),
           limit: Number(getArg(args, "--limit")) || undefined,
+          includeThinking: hasFlag(args, "--include-thinking"),
+          includeArtifacts: !hasFlag(args, "--no-artifacts"),
+          includeAttachments: !hasFlag(args, "--no-attachments"),
+          includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
         });
 
         if (hasFlag(args, "--json")) {
@@ -240,6 +281,10 @@ async function main() {
           synthesize: hasFlag(args, "--synthesize"),
           model: getArg(args, "--model"),
           maxTokens: Number(getArg(args, "--max-tokens")) || undefined,
+          includeThinking: hasFlag(args, "--include-thinking"),
+          includeArtifacts: !hasFlag(args, "--no-artifacts"),
+          includeAttachments: !hasFlag(args, "--no-attachments"),
+          includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
         });
 
         if (hasFlag(args, "--json")) {
@@ -690,6 +735,62 @@ async function main() {
           console.error("Unknown rules subcommand. Use: list, add, validate, update");
           process.exit(1);
         }
+      }
+
+      // =====================================================================
+      // INSIGHTS
+      // =====================================================================
+      case "insights": {
+        const sub = args[1];
+        const useJson = hasFlag(args, "--json");
+
+        if (sub === "session") {
+          const id = args[2];
+          if (!id) {
+            console.error("Usage: smriti insights session <session-id>");
+            process.exit(1);
+          }
+          const report = getSessionInsights(db, id);
+          if (!report) {
+            console.error(`Session not found: ${id}`);
+            process.exit(1);
+          }
+          console.log(useJson ? json(report) : formatSessionInsights(report));
+        } else if (sub === "project") {
+          const id = args[2];
+          if (!id) {
+            console.error("Usage: smriti insights project <project-id>");
+            process.exit(1);
+          }
+          const report = getProjectInsights(db, id);
+          if (!report) {
+            console.error(`Project not found or has no data: ${id}`);
+            process.exit(1);
+          }
+          console.log(useJson ? json(report) : formatProjectInsights(report));
+        } else if (sub === "costs") {
+          const days = Number(getArg(args, "--days")) || undefined;
+          const report = getCostBreakdown(db, { days });
+          console.log(useJson ? json(report) : formatCostBreakdown(report));
+        } else if (sub === "errors") {
+          const project = getArg(args, "--project");
+          const report = getErrorAnalysis(db, { project });
+          console.log(useJson ? json(report) : formatErrorAnalysis(report));
+        } else if (sub === "tools") {
+          const project = getArg(args, "--project");
+          const report = getToolStats(db, { project });
+          console.log(useJson ? json(report) : formatToolStats(report));
+        } else {
+          // Default: full dashboard
+          const overview = getOverview(db);
+          const recs = getRecommendations(db);
+          if (useJson) {
+            console.log(json({ ...overview, recommendations: recs }));
+          } else {
+            console.log(formatOverview(overview, recs));
+          }
+        }
+        break;
       }
 
       // =====================================================================

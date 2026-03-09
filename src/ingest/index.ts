@@ -9,6 +9,8 @@ import type { Database } from "bun:sqlite";
 import type { ParsedMessage, StructuredMessage } from "./types";
 import { resolveSession } from "./session-resolver";
 import { storeBlocks, storeCosts, storeMessage, storeSession } from "./store-gateway";
+import type { ToolCorrelationMap } from "./store-gateway";
+import { deleteSidecarRows } from "../db";
 
 // =============================================================================
 // Types — re-export from types.ts
@@ -51,6 +53,7 @@ async function ingestParsedSessions(
     explicitProjectId?: string;
     explicitProjectPath?: string;
     incremental?: boolean;
+    force?: boolean;
   } = {
     existingSessionIds: new Set(),
   }
@@ -66,7 +69,7 @@ async function ingestParsedSessions(
   const useSessionTxn = process.env.SMRITI_INGEST_SESSION_TXN !== "0";
 
   for (const session of sessions) {
-    if (!options.incremental && options.existingSessionIds.has(session.sessionId)) {
+    if (!options.force && !options.incremental && options.existingSessionIds.has(session.sessionId)) {
       result.skipped++;
       continue;
     }
@@ -96,8 +99,13 @@ async function ingestParsedSessions(
         continue;
       }
 
+      const correlationMap: ToolCorrelationMap = new Map();
       if (useSessionTxn) db.exec("BEGIN IMMEDIATE");
       try {
+        // Force mode: delete existing sidecar rows before re-processing
+        if (options.force && options.existingSessionIds.has(session.sessionId)) {
+          deleteSidecarRows(db, session.sessionId);
+        }
         for (const msg of messagesToIngest) {
           const content = isStructuredMessage(msg) ? msg.plainText || "(structured content)" : msg.content;
           const messageOptions = isStructuredMessage(msg)
@@ -122,7 +130,8 @@ async function ingestParsedSessions(
               session.sessionId,
               resolved.projectId,
               msg.blocks,
-              msg.timestamp || new Date().toISOString()
+              msg.timestamp || new Date().toISOString(),
+              correlationMap
             );
 
             if (msg.metadata.tokenUsage) {
@@ -210,6 +219,7 @@ export async function ingest(
     title?: string;
     sessionId?: string;
     projectId?: string;
+    force?: boolean;
   } = {}
 ): Promise<IngestResult> {
   const existingSessionIds = getExistingSessionIds(db);
@@ -235,7 +245,8 @@ export async function ingest(
         existingSessionIds,
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
-        incremental: true,
+        incremental: !options.force,
+        force: options.force,
       });
     }
     case "codex": {
@@ -250,6 +261,7 @@ export async function ingest(
         existingSessionIds,
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
+        force: options.force,
       });
     }
     case "cursor": {
@@ -275,6 +287,7 @@ export async function ingest(
         existingSessionIds,
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
+        force: options.force,
       });
     }
     case "cline": {
@@ -290,6 +303,7 @@ export async function ingest(
         existingSessionIds,
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
+        force: options.force,
       });
     }
     case "copilot": {
@@ -308,7 +322,38 @@ export async function ingest(
         existingSessionIds,
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
+        force: options.force,
       });
+    }
+    case "claude-web": {
+      const { ingestClaudeWeb } = await import("./claude-web");
+      const filePath = options.filePath;
+      if (!filePath) {
+        return {
+          agent: "claude-web",
+          sessionsFound: 0,
+          sessionsIngested: 0,
+          messagesIngested: 0,
+          skipped: 0,
+          errors: ["File path required: smriti ingest claude-web <conversations.json>"],
+        };
+      }
+      return ingestClaudeWeb(db, filePath, baseOptions);
+    }
+    case "claude-web-memory": {
+      const { ingestClaudeWebMemories } = await import("./claude-web");
+      const filePath = options.filePath;
+      if (!filePath) {
+        return {
+          agent: "claude-web",
+          sessionsFound: 0,
+          sessionsIngested: 0,
+          messagesIngested: 0,
+          skipped: 0,
+          errors: ["File path required: smriti ingest claude-web-memory <memories.json>"],
+        };
+      }
+      return ingestClaudeWebMemories(db, filePath, baseOptions);
     }
     case "file":
     case "generic": {
@@ -338,6 +383,7 @@ export async function ingest(
           onProgress: options.onProgress,
           explicitProjectId: options.projectId,
           explicitProjectPath: options.projectPath,
+          force: options.force,
         }
       );
       return result;
@@ -349,7 +395,7 @@ export async function ingest(
         sessionsIngested: 0,
         messagesIngested: 0,
         skipped: 0,
-        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, cline, copilot, or file`],
+        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, cline, copilot, claude-web, or file`],
       };
   }
 }

@@ -18,6 +18,10 @@ export type SearchFilters = {
   project?: string;
   agent?: string;
   limit?: number;
+  includeThinking?: boolean;    // Default: false (opt-in for privacy)
+  includeArtifacts?: boolean;   // Default: true
+  includeAttachments?: boolean; // Default: true
+  includeVoiceNotes?: boolean;  // Default: true
 };
 
 export type SearchResult = {
@@ -48,13 +52,31 @@ export function searchFiltered(
 ): SearchResult[] {
   const limit = filters.limit || DEFAULT_SEARCH_LIMIT;
 
+  // Build column list for FTS5 column filter
+  const columns = ["session_title", "role", "content"];
+  if (filters.includeThinking) columns.push("thinking");
+  if (filters.includeArtifacts !== false) columns.push("artifacts");
+  if (filters.includeAttachments !== false) columns.push("attachments");
+  if (filters.includeVoiceNotes !== false) columns.push("voice_notes");
+
+  // BM25 weights: session_title, role, content, thinking, artifacts, attachments, voice_notes
+  const weights = [
+    10.0, // session_title
+    1.0,  // role
+    5.0,  // content
+    filters.includeThinking ? 3.0 : 0.0,
+    filters.includeArtifacts !== false ? 4.0 : 0.0,
+    filters.includeAttachments !== false ? 4.0 : 0.0,
+    filters.includeVoiceNotes !== false ? 4.0 : 0.0,
+  ];
+
   // Build dynamic WHERE clause
   const conditions: string[] = [];
   const params: any[] = [];
 
-  // FTS match condition
-  conditions.push(`mf.content MATCH ?`);
-  params.push(query);
+  // FTS match condition with column filter
+  conditions.push(`memory_fts MATCH ?`);
+  params.push(`{${columns.join(" ")}} : ${query}`);
 
   // Category filter
   if (filters.category) {
@@ -99,7 +121,7 @@ export function searchFiltered(
       mm.id AS message_id,
       mm.role,
       mm.content,
-      (1.0 / (1.0 + ABS(bm25(memory_fts)))) AS score,
+      (1.0 / (1.0 + ABS(bm25(memory_fts, ${weights.join(", ")})))) AS score,
       'fts' AS source,
       sm.project_id AS project,
       sm.agent_id AS agent
