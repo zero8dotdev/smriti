@@ -9,7 +9,7 @@ import type { Database } from "bun:sqlite";
 import { SMRITI_DIR, AUTHOR } from "../config";
 import { hashContent } from "../qmd";
 import { existsSync, mkdirSync } from "fs";
-import { join, basename } from "path";
+import { join } from "path";
 import {
   formatSessionAsFallback,
   isSessionWorthSharing,
@@ -25,6 +25,7 @@ import {
 } from "./reflect";
 import { segmentSession } from "./segment";
 import { generateDocumentsSequential, generateFrontmatter } from "./document";
+import { slugify, datePrefix } from "./utils";
 import type { RawMessage } from "./formatter";
 
 // =============================================================================
@@ -51,24 +52,8 @@ export type ShareResult = {
 };
 
 // =============================================================================
-// Helpers
+// Shared Helpers
 // =============================================================================
-
-/** Generate a slug from text */
-function slugify(text: string, maxLen: number = 50): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, maxLen)
-    .replace(/-$/, "");
-}
-
-/** Format a date as YYYY-MM-DD */
-function datePrefix(isoDate: string): string {
-  return isoDate.slice(0, 10);
-}
 
 /** Generate YAML frontmatter */
 function frontmatter(meta: Record<string, string | string[]>): string {
@@ -84,54 +69,34 @@ function frontmatter(meta: Record<string, string | string[]>): string {
   return lines.join("\n");
 }
 
-// =============================================================================
-// Segmented Sharing (3-Stage Pipeline)
-// =============================================================================
-
-/**
- * Share knowledge using 3-stage segmentation pipeline
- * Stage 1: Segment session into knowledge units
- * Stage 2: Generate documentation per unit
- * Stage 3: Save and deduplicate (deferred)
- */
-async function shareSegmentedKnowledge(
-  db: Database,
-  options: ShareOptions = {}
-): Promise<ShareResult> {
-  const author = options.author || AUTHOR;
-  const minRelevance = options.minRelevance ?? 6;
-
-  const result: ShareResult = {
-    filesCreated: 0,
-    filesSkipped: 0,
-    outputDir: "",
-    errors: [],
-  };
-
-  // Determine output directory
-  let outputDir: string;
+/** Resolve the output directory from options */
+function resolveOutputDir(db: Database, options: ShareOptions): string {
   if (options.outputDir) {
-    outputDir = options.outputDir;
-  } else if (options.project) {
+    return options.outputDir;
+  }
+  if (options.project) {
     const project = db
       .prepare(`SELECT path FROM smriti_projects WHERE id = ?`)
       .get(options.project) as { path: string } | null;
     if (project?.path) {
-      outputDir = join(project.path, SMRITI_DIR);
-    } else {
-      outputDir = join(process.cwd(), SMRITI_DIR);
+      return join(project.path, SMRITI_DIR);
     }
-  } else {
-    outputDir = join(process.cwd(), SMRITI_DIR);
   }
+  return join(process.cwd(), SMRITI_DIR);
+}
 
-  result.outputDir = outputDir;
-
-  // Ensure directory structure
-  const knowledgeDir = join(outputDir, "knowledge");
-  mkdirSync(knowledgeDir, { recursive: true });
-
-  // Build query for sessions to share
+/** Build and execute session query with filters */
+function querySessions(
+  db: Database,
+  options: ShareOptions
+): Array<{
+  id: string;
+  title: string;
+  created_at: string;
+  summary: string | null;
+  agent_id: string | null;
+  project_id: string | null;
+}> {
   const conditions: string[] = ["ms.active = 1"];
   const params: any[] = [];
 
@@ -161,7 +126,7 @@ async function shareSegmentedKnowledge(
     params.push(options.sessionId);
   }
 
-  const sessions = db
+  return db
     .prepare(
       `SELECT ms.id, ms.title, ms.created_at, ms.summary,
               sm.agent_id, sm.project_id
@@ -170,15 +135,98 @@ async function shareSegmentedKnowledge(
        WHERE ${conditions.join(" AND ")}
        ORDER BY ms.updated_at DESC`
     )
-    .all(...params) as Array<{
-      id: string;
-      title: string;
-      created_at: string;
-      summary: string | null;
-      agent_id: string | null;
-      project_id: string | null;
-    }>;
+    .all(...params) as any;
+}
 
+/** Get messages for a session */
+function getSessionMessages(
+  db: Database,
+  sessionId: string
+): Array<{
+  id: number;
+  role: string;
+  content: string;
+  hash: string;
+  created_at: string;
+}> {
+  return db
+    .prepare(
+      `SELECT mm.id, mm.role, mm.content, mm.hash, mm.created_at
+       FROM memory_messages mm
+       WHERE mm.session_id = ?
+       ORDER BY mm.id`
+    )
+    .all(sessionId) as any;
+}
+
+/** Write manifest and config files, generate CLAUDE.md */
+async function writeManifest(
+  outputDir: string,
+  newEntries: Array<{ id: string; category: string; file: string; shared_at: string }>
+): Promise<void> {
+  const indexPath = join(outputDir, "index.json");
+  let existingManifest: any[] = [];
+  try {
+    const existing = await Bun.file(indexPath).text();
+    existingManifest = JSON.parse(existing);
+  } catch {
+    // No existing manifest
+  }
+
+  const fullManifest = [...existingManifest, ...newEntries];
+  await Bun.write(indexPath, JSON.stringify(fullManifest, null, 2));
+
+  // Write config if it doesn't exist
+  const configPath = join(outputDir, "config.json");
+  if (!existsSync(configPath)) {
+    await Bun.write(
+      configPath,
+      JSON.stringify(
+        {
+          version: 1,
+          allowedCategories: ["*"],
+          autoSync: false,
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  // Generate CLAUDE.md
+  await generateClaudeMd(outputDir, fullManifest);
+}
+
+// =============================================================================
+// Segmented Sharing (3-Stage Pipeline)
+// =============================================================================
+
+/**
+ * Share knowledge using 3-stage segmentation pipeline
+ * Stage 1: Segment session into knowledge units
+ * Stage 2: Generate documentation per unit
+ * Stage 3: Save and deduplicate
+ */
+async function shareSegmentedKnowledge(
+  db: Database,
+  options: ShareOptions = {}
+): Promise<ShareResult> {
+  const author = options.author || AUTHOR;
+  const minRelevance = options.minRelevance ?? 6;
+
+  const outputDir = resolveOutputDir(db, options);
+  const result: ShareResult = {
+    filesCreated: 0,
+    filesSkipped: 0,
+    outputDir,
+    errors: [],
+  };
+
+  // Ensure directory structure
+  const knowledgeDir = join(outputDir, "knowledge");
+  mkdirSync(knowledgeDir, { recursive: true });
+
+  const sessions = querySessions(db, options);
   const manifest: Array<{
     id: string;
     category: string;
@@ -188,22 +236,7 @@ async function shareSegmentedKnowledge(
 
   for (const session of sessions) {
     try {
-      // Get messages for this session
-      const messages = db
-        .prepare(
-          `SELECT mm.id, mm.role, mm.content, mm.hash, mm.created_at
-           FROM memory_messages mm
-           WHERE mm.session_id = ?
-           ORDER BY mm.id`
-        )
-        .all(session.id) as Array<{
-          id: number;
-          role: string;
-          content: string;
-          hash: string;
-          created_at: string;
-        }>;
-
+      const messages = getSessionMessages(db, session.id);
       if (messages.length === 0) continue;
 
       // Skip noise-only sessions
@@ -245,23 +278,23 @@ async function shareSegmentedKnowledge(
       // Write documents and track dedup
       for (const doc of docs) {
         try {
-          const categoryDir = join(knowledgeDir, doc.category.replace("/", "-"));
+          const categoryDir = join(knowledgeDir, doc.category.replaceAll("/", "-"));
           mkdirSync(categoryDir, { recursive: true });
 
           const filePath = join(categoryDir, doc.filename);
 
           // Build frontmatter
-          const frontmatter = generateFrontmatter(
+          const fm = generateFrontmatter(
             session.id,
             doc.unitId,
-            doc.frontmatter,
+            { ...doc.frontmatter, pipeline: "segmented" },
             author,
             session.project_id || undefined
           );
 
-          const content = frontmatter + "\n\n" + doc.markdown;
+          const content = fm + "\n\n" + doc.markdown;
 
-          // Check unit-level dedup
+          // Check unit-level dedup via content hash only
           const unitHash = await hashContent(
             JSON.stringify({
               content: doc.markdown,
@@ -272,10 +305,9 @@ async function shareSegmentedKnowledge(
 
           const exists = db
             .prepare(
-              `SELECT 1 FROM smriti_shares
-               WHERE content_hash = ? AND unit_id = ?`
+              `SELECT 1 FROM smriti_shares WHERE content_hash = ?`
             )
-            .get(unitHash, doc.unitId);
+            .get(unitHash);
 
           if (exists) {
             result.filesSkipped++;
@@ -301,10 +333,11 @@ async function shareSegmentedKnowledge(
             JSON.stringify(doc.frontmatter.entities)
           );
 
+          const relPath = `knowledge/${doc.category.replaceAll("/", "-")}/${doc.filename}`;
           manifest.push({
             id: session.id,
             category: doc.category,
-            file: `knowledge/${doc.category.replace("/", "-")}/${doc.filename}`,
+            file: relPath,
             shared_at: new Date().toISOString(),
           });
 
@@ -318,39 +351,7 @@ async function shareSegmentedKnowledge(
     }
   }
 
-  // Write manifest and CLAUDE.md
-  const indexPath = join(outputDir, "index.json");
-  let existingManifest: any[] = [];
-  try {
-    const existing = await Bun.file(indexPath).text();
-    existingManifest = JSON.parse(existing);
-  } catch {
-    // No existing manifest
-  }
-
-  const fullManifest = [...existingManifest, ...manifest];
-  await Bun.write(indexPath, JSON.stringify(fullManifest, null, 2));
-
-  // Write config if it doesn't exist
-  const configPath = join(outputDir, "config.json");
-  if (!existsSync(configPath)) {
-    await Bun.write(
-      configPath,
-      JSON.stringify(
-        {
-          version: 1,
-          allowedCategories: ["*"],
-          autoSync: false,
-        },
-        null,
-        2
-      )
-    );
-  }
-
-  // Generate CLAUDE.md
-  await generateClaudeMd(outputDir, fullManifest);
-
+  await writeManifest(outputDir, manifest);
   return result;
 }
 
@@ -373,84 +374,19 @@ export async function shareKnowledge(
 
   // Otherwise use legacy single-stage pipeline
   const author = options.author || AUTHOR;
+  const outputDir = resolveOutputDir(db, options);
   const result: ShareResult = {
     filesCreated: 0,
     filesSkipped: 0,
-    outputDir: "",
+    outputDir,
     errors: [],
   };
-
-  // Determine output directory
-  let outputDir: string;
-  if (options.outputDir) {
-    outputDir = options.outputDir;
-  } else if (options.project) {
-    // Look up project path
-    const project = db
-      .prepare(`SELECT path FROM smriti_projects WHERE id = ?`)
-      .get(options.project) as { path: string } | null;
-    if (project?.path) {
-      outputDir = join(project.path, SMRITI_DIR);
-    } else {
-      outputDir = join(process.cwd(), SMRITI_DIR);
-    }
-  } else {
-    outputDir = join(process.cwd(), SMRITI_DIR);
-  }
-
-  result.outputDir = outputDir;
 
   // Ensure directory structure
   const knowledgeDir = join(outputDir, "knowledge");
   mkdirSync(knowledgeDir, { recursive: true });
 
-  // Build query for sessions to share
-  const conditions: string[] = ["ms.active = 1"];
-  const params: any[] = [];
-
-  if (options.category) {
-    conditions.push(
-      `EXISTS (
-        SELECT 1 FROM smriti_session_tags st
-        WHERE st.session_id = ms.id
-          AND (st.category_id = ? OR st.category_id LIKE ? || '/%')
-      )`
-    );
-    params.push(options.category, options.category);
-  }
-
-  if (options.project) {
-    conditions.push(
-      `EXISTS (
-        SELECT 1 FROM smriti_session_meta sm
-        WHERE sm.session_id = ms.id AND sm.project_id = ?
-      )`
-    );
-    params.push(options.project);
-  }
-
-  if (options.sessionId) {
-    conditions.push(`ms.id = ?`);
-    params.push(options.sessionId);
-  }
-
-  const sessions = db
-    .prepare(
-      `SELECT ms.id, ms.title, ms.created_at, ms.summary,
-              sm.agent_id, sm.project_id
-       FROM memory_sessions ms
-       LEFT JOIN smriti_session_meta sm ON sm.session_id = ms.id
-       WHERE ${conditions.join(" AND ")}
-       ORDER BY ms.updated_at DESC`
-    )
-    .all(...params) as Array<{
-      id: string;
-      title: string;
-      created_at: string;
-      summary: string | null;
-      agent_id: string | null;
-      project_id: string | null;
-    }>;
+  const sessions = querySessions(db, options);
 
   // Get existing share hashes for dedup
   const existingHashes = new Set(
@@ -470,22 +406,7 @@ export async function shareKnowledge(
 
   for (const session of sessions) {
     try {
-      // Get messages for this session
-      const messages = db
-        .prepare(
-          `SELECT mm.id, mm.role, mm.content, mm.hash, mm.created_at
-           FROM memory_messages mm
-           WHERE mm.session_id = ?
-           ORDER BY mm.id`
-        )
-        .all(session.id) as Array<{
-          id: number;
-          role: string;
-          content: string;
-          hash: string;
-          created_at: string;
-        }>;
-
+      const messages = getSessionMessages(db, session.id);
       if (messages.length === 0) continue;
 
       // Check dedup via content hash
@@ -507,7 +428,7 @@ export async function shareKnowledge(
         categories[0]?.category_id || "uncategorized";
 
       // Create category subdirectory
-      const categoryDir = join(knowledgeDir, primaryCategory.replace("/", "-"));
+      const categoryDir = join(knowledgeDir, primaryCategory.replaceAll("/", "-"));
       mkdirSync(categoryDir, { recursive: true });
 
       // Skip noise-only sessions
@@ -582,10 +503,11 @@ export async function shareKnowledge(
         sessionHash
       );
 
+      const relPath = `knowledge/${primaryCategory.replaceAll("/", "-")}/${filename}`;
       manifest.push({
         id: session.id,
         category: primaryCategory,
-        file: `knowledge/${primaryCategory.replace("/", "-")}/${filename}`,
+        file: relPath,
         shared_at: new Date().toISOString(),
       });
 
@@ -595,39 +517,7 @@ export async function shareKnowledge(
     }
   }
 
-  // Write manifest
-  const indexPath = join(outputDir, "index.json");
-  let existingManifest: any[] = [];
-  try {
-    const existing = await Bun.file(indexPath).text();
-    existingManifest = JSON.parse(existing);
-  } catch {
-    // No existing manifest
-  }
-
-  const fullManifest = [...existingManifest, ...manifest];
-  await Bun.write(indexPath, JSON.stringify(fullManifest, null, 2));
-
-  // Write config if it doesn't exist
-  const configPath = join(outputDir, "config.json");
-  if (!existsSync(configPath)) {
-    await Bun.write(
-      configPath,
-      JSON.stringify(
-        {
-          version: 1,
-          allowedCategories: ["*"],
-          autoSync: false,
-        },
-        null,
-        2
-      )
-    );
-  }
-
-  // Generate CLAUDE.md so Claude Code discovers shared knowledge
-  await generateClaudeMd(outputDir, fullManifest);
-
+  await writeManifest(outputDir, manifest);
   return result;
 }
 

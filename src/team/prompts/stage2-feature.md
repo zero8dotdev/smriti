@@ -4,6 +4,7 @@ You are documenting feature design or implementation.
 
 ## Knowledge Unit
 
+**Title**: {{title}}
 **Topic**: {{topic}}
 **Category**: {{category}}
 **Entities**: {{entities}}
@@ -23,4 +24,5 @@ Transform this into feature documentation with these sections:
 4. **Testing** - How to test or verify the feature
 5. **Future Enhancements** - Known limitations or improvements
 
+Start with a `# Heading` using the title above.
 Return only the markdown body, no frontmatter. Focus on clarity for future team members.

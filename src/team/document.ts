@@ -5,10 +5,10 @@
  * using category-specific templates and LLM synthesis.
  */
 
-import { OLLAMA_HOST, OLLAMA_MODEL, SMRITI_DIR } from "../config";
 import { join } from "path";
 import type { KnowledgeUnit, DocumentationOptions, DocumentGenerationResult } from "./types";
-
+import { callOllama } from "./ollama";
+import { slugify } from "./utils";
 
 // =============================================================================
 // Template Loading
@@ -110,7 +110,7 @@ export async function generateDocument(
   // Call LLM to synthesize
   let synthesis = "";
   try {
-    synthesis = await callOllama(prompt, options.model);
+    synthesis = await callOllama(prompt, { model: options.model });
   } catch (err) {
     console.warn(`Failed to synthesize unit ${unit.id}:`, err);
     // Fallback: return unit content as-is
@@ -161,54 +161,6 @@ export async function generateDocumentsSequential(
   }
 
   return results;
-}
-
-// =============================================================================
-// Filename Generation
-// =============================================================================
-
-/**
- * Generate a URL-friendly slug from text
- */
-function slugify(text: string, maxLen: number = 50): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, maxLen)
-    .replace(/-$/, "");
-}
-
-// =============================================================================
-// Ollama Integration
-// =============================================================================
-
-/**
- * Call Ollama generate API
- */
-async function callOllama(prompt: string, model?: string): Promise<string> {
-  const ollamaModel = model || OLLAMA_MODEL;
-
-  const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: ollamaModel,
-      prompt,
-      stream: false,
-      temperature: 0.7,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Ollama API error: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const data = (await response.json()) as { response: string };
-  return data.response || "";
 }
 
 // =============================================================================

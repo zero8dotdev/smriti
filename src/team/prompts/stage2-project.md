@@ -4,6 +4,7 @@ You are documenting project setup, configuration, or scaffolding work.
 
 ## Knowledge Unit
 
+**Title**: {{title}}
 **Topic**: {{topic}}
 **Category**: {{category}}
 **Entities**: {{entities}}
@@ -23,4 +24,5 @@ Transform this into a project setup guide with these sections:
 4. **Verification** - How to verify it worked
 5. **Troubleshooting** - Common issues and solutions
 
+Start with a `# Heading` using the title above.
 Return only the markdown body, no frontmatter. Make it step-by-step and actionable.
