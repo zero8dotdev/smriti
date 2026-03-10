@@ -17,6 +17,9 @@
     "bench:scorecard": "bun run scripts/bench-scorecard.ts --baseline bench/baseline.ci-small.json --profile ci-small --threshold-pct 20",
     "bench:ingest-hotpaths": "bun run scripts/bench-ingest-hotpaths.ts",
     "bench:ingest-pipeline": "bun run scripts/bench-ingest-pipeline.ts --sessions 120 --messages 12",
+    "bench:quality": "bun src/index.ts bench --profile ci-small",
+    "bench:quality:json": "bun src/index.ts bench --profile ci-small --json --out bench/results/quality-ci-small.json",
+    "bench:quality:compare": "bun src/index.ts bench --profile ci-small --compare bench/results/quality-ci-small.json",
     "release:meta": "bun run scripts/release-meta.ts"
   },
   "dependencies": {

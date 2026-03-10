@@ -109,6 +109,7 @@ Commands:
   status                       Memory statistics
   projects                     List projects
   insights [subcommand]        Cost & usage analysis dashboard
+  bench [options]              Search quality + performance benchmark
   embed                        Embed new messages for vector search
   upgrade                      Update smriti to the latest version
   help                         Show this help
@@ -173,7 +174,19 @@ Examples:
   smriti share --category decision
   smriti sync
   smriti insights --json
+  smriti bench
+  smriti bench --profile small --json --out bench/results.json
+  smriti bench --compare bench/baseline.json
   smriti upgrade
+
+Bench options:
+  --profile <name>             ci-small (default), small, medium
+  --json                       Output raw JSON
+  --out <path>                 Write report to file
+  --compare <path>             Compare against baseline JSON
+  --no-perf                    Skip performance measurement
+  --save                       Save results to history
+  --history                    Show historical score trend
 `;
 
 async function main() {
@@ -630,6 +643,32 @@ async function main() {
       // =====================================================================
       // EMBED
       // =====================================================================
+      // =====================================================================
+      // BENCH
+      // =====================================================================
+      case "bench": {
+        const { runBench } = await import("./bench/index");
+        const profileArg = getArg(args, "--profile") || "ci-small";
+        const useJson = hasFlag(args, "--json");
+        const outPath = getArg(args, "--out");
+        const comparePath = getArg(args, "--compare");
+        const skipPerf = hasFlag(args, "--no-perf");
+        const save = hasFlag(args, "--save");
+        const history = hasFlag(args, "--history");
+
+        await runBench({
+          profile: profileArg as "ci-small" | "small" | "medium",
+          json: useJson,
+          outPath,
+          comparePath,
+          skipPerf,
+          save,
+          history,
+          realDb: save || history ? db : undefined,
+        });
+        break;
+      }
+
       case "embed": {
         console.log("Embedding new messages...");
         const count = await embedMemoryMessages(db, {
