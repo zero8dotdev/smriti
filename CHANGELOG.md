@@ -1,15 +1,68 @@
-## [0.6.0] - 2026-03-09
+## [0.6.0] - 2026-03-14
 
-### Added
+### 🎯 Release Overview
+Promotes validated changes from `dev` to `main`. Significant release spanning multiple feature areas and infrastructure improvements across v0.3.0→v0.6.0.
 
-- feat(ingest): `--force` flag for re-ingesting sessions (deletes sidecars, re-extracts)
-- feat(db): sidecar content searchable via unified FTS — artifacts, thinking blocks, attachments, voice notes
-- feat(insights): cost & usage analytics module with CLI commands (`smriti insights`)
+### ✨ Major Features
 
-### Database
+#### Sidecar Content Search
+- Make artifacts, thinking blocks, attachments, and voice notes searchable via unified FTS
+- Extended `memory_fts` with new columns via `migrateFTSToV2()`
+- Privacy-first design: thinking blocks opt-in only, others enabled by default
+- Weighted BM25 scoring per content type
+- New CLI flags: `--include-thinking`, `--no-artifacts`, `--no-attachments`, `--no-voice-notes`
+- Applied to both search and recall commands
 
+#### Cost Estimation & Analytics
+- Model-aware cost estimation in database
+- New `smriti insights` module with CLI commands for usage analytics
+- Track costs per session
+
+#### Ingest Force Mode
+- `--force` flag to re-ingest already-processed sessions
+- Allows session refresh without deduplication blocking
+
+### 🔧 Infrastructure & Fixes
+
+#### Database
 - New tables: `smriti_artifacts`, `smriti_thinking`, `smriti_attachments`, `smriti_voice_notes`
 - FTS migration to v2 includes sidecar content
+- Initialize QMD store tables on database creation
+- Fixed Windows `mkdir` edge case for current directory
+
+#### Install & Path Resolution
+- Fixed PATH issues in CI environments
+- QMD submodule initialization improvements
+- Graceful fallback to direct bun execution
+
+#### CI/Release Pipeline
+- Auto-generate CHANGELOG.md from merged PRs
+- Added commit lint and semver validation
+- Deterministic release notes generation
+- Draft release creation in dev workflow
+- Auto-release on main branch merges
+- Improved workflow and check naming for PR readability
+- Skip PR test job for dev-to-main release PRs
+
+#### Core Features
+- Add `--version` command handler
+- Add missing cline and copilot to default agents seed
+
+#### Performance
+- Optimize Bun install with caching for faster CI workflows
+
+### 📚 Documentation
+- Overhauled documentation structure and improved narrative
+- Updated CLAUDE.md with segmented sharing, benchmarks, and project structure
+- CI/release workflow architecture documentation
+- Release notes for v0.3.0→v0.6.0
+
+### 📊 Release Progression
+This v0.6.0 consolidates multiple point releases:
+- **v0.3.0→v0.3.2**: Windows installer, Copilot ingestion, CI foundations, database initialization fixes
+- **v0.4.0→v0.4.1**: Release workflow improvements, deterministic versioning, auto-release
+- **v0.5.0→v0.5.1**: Share pipeline v2, cost estimation, docs overhaul, bug fixes
+- **v0.6.0**: Sidecar search, ingest force mode, insights module, final infrastructure hardening
 
 ---
 
