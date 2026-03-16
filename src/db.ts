@@ -447,6 +447,25 @@ export function initializeSmritiTables(db: Database): void {
       ON smriti_attachments(session_id);
     CREATE INDEX IF NOT EXISTS idx_smriti_voice_notes_session
       ON smriti_voice_notes(session_id);
+
+    -- Bench run history
+    CREATE TABLE IF NOT EXISTS smriti_bench_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_at TEXT NOT NULL DEFAULT (datetime('now')),
+      profile TEXT NOT NULL,
+      combined_score REAL NOT NULL,
+      easy_mrr REAL,
+      medium_mrr REAL,
+      hard_mrr REAL,
+      easy_hit3 REAL,
+      medium_hit3 REAL,
+      hard_hit3 REAL,
+      fts_p50_ms REAL,
+      recall_p50_ms REAL,
+      metadata TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_smriti_bench_runs_profile
+      ON smriti_bench_runs(profile, run_at);
   `);
 }
 
