@@ -17,8 +17,8 @@ export {
   importTranscript,
   initializeMemoryTables,
   createSession,
-} from "../qmd/src/memory";
+} from "./memory";
 
 export { hashContent } from "../qmd/src/store";
 
-export { ollamaRecall } from "../qmd/src/ollama";
+export { ollamaRecall } from "./ollama";
