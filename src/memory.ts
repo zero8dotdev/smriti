@@ -694,12 +694,14 @@ export async function recallMemories(
     model?: string;
     maxTokens?: number;
     fast?: boolean;
+    intent?: string;
   } = {}
 ): Promise<{ results: MemorySearchResult[]; synthesis?: string }> {
   const startedAt = performance.now();
   const shouldTraceRecall = process.env.SMRITI_BENCH_TRACE === "1";
   const limit = options.limit ?? 10;
   const fast = options.fast ?? false;
+  const intent = options.intent;
 
   // Candidate fetch size — fetch more when reranking to feed the reranker
   const candidateLimit = fast ? limit : Math.max(limit * 4, 40);
@@ -808,7 +810,7 @@ export async function recallMemories(
         file: `${r.session_id}:${r.message_id}`,
         text: r.content,
       }));
-      const reranked = await store.internal.rerank(query, docs);
+      const reranked = await store.internal.rerank(query, docs, undefined, intent);
       const scoreMap = new Map(reranked.map((r) => [r.file, r.score]));
       for (const r of dedupedResults) {
         const key = `${r.session_id}:${r.message_id}`;

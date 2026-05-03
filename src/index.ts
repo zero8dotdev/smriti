@@ -153,6 +153,7 @@ Recall options:
   --model <name>               Ollama model for synthesis
   --max-tokens <n>             Max synthesis tokens
   --fast                       Skip query expansion and reranking
+  --wide                       Search all projects (rerank with current project as intent)
 
 Context options:
   --project <id>               Project filter (auto-detect from cwd)
@@ -314,9 +315,12 @@ async function main() {
           process.exit(1);
         }
 
+        const recallProject = getArg(args, "--project");
+        const wideMode = hasFlag(args, "--wide");
+
         const result = await recall(db, query, {
           category: getArg(args, "--category"),
-          project: getArg(args, "--project"),
+          project: recallProject || undefined,
           agent: getArg(args, "--agent"),
           limit: Number(getArg(args, "--limit")) || undefined,
           synthesize: hasFlag(args, "--synthesize"),
@@ -327,7 +331,24 @@ async function main() {
           includeAttachments: !hasFlag(args, "--no-attachments"),
           includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
           fast: hasFlag(args, "--fast"),
+          wide: wideMode,
         });
+
+        // In --wide mode, look up project info for cross-project badge
+        if (wideMode && recallProject && result.results.length > 0) {
+          const sessionIds = result.results.map(r => r.session_id);
+          const placeholders = sessionIds.map(() => "?").join(",");
+          const projRows = db.prepare(
+            `SELECT session_id, project_id FROM smriti_session_meta WHERE session_id IN (${placeholders})`
+          ).all(...sessionIds) as { session_id: string; project_id: string }[];
+          const projMap = new Map(projRows.map(r => [r.session_id, r.project_id]));
+          for (const r of result.results) {
+            const proj = projMap.get(r.session_id);
+            if (proj && proj !== recallProject && !(r as any).project) {
+              (r as any).project = proj;
+            }
+          }
+        }
 
         if (hasFlag(args, "--json")) {
           console.log(json(result));

@@ -18,6 +18,7 @@ export type RecallOptions = SearchFilters & {
   model?: string;
   maxTokens?: number;
   fast?: boolean;
+  wide?: boolean;
 };
 
 export type RecallResult = {
@@ -38,7 +39,13 @@ export async function recall(
   query: string,
   options: RecallOptions = {}
 ): Promise<RecallResult> {
-  const hasFilters = options.category || options.project || options.agent
+  // --wide bypasses the project filter: search all projects, rerank with project as intent
+  const effectiveProject = (options.wide && options.project) ? undefined : options.project;
+  const rerankIntent = (options.wide && options.project)
+    ? `relevant to ${options.project} project context`
+    : undefined;
+
+  const hasFilters = options.category || effectiveProject || options.agent
     || options.includeThinking || options.includeArtifacts === false
     || options.includeAttachments === false || options.includeVoiceNotes === false;
 
@@ -50,6 +57,7 @@ export async function recall(
       model: options.model,
       maxTokens: options.maxTokens,
       fast: options.fast,
+      intent: rerankIntent,
     });
     return {
       results: qmdResult.results,
@@ -60,7 +68,7 @@ export async function recall(
   // Filtered recall
   const results = searchFiltered(db, query, {
     category: options.category,
-    project: options.project,
+    project: effectiveProject,
     agent: options.agent,
     limit: options.limit || DEFAULT_RECALL_LIMIT,
     includeThinking: options.includeThinking,
