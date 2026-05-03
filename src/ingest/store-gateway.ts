@@ -11,7 +11,10 @@ import {
   upsertSessionMeta,
   computeDensityScore,
   updateDensityScore,
+  insertSessionQueries,
+  getSessionQueryCount,
 } from "../db";
+import { getQmdStore } from "../store";
 import type { MessageBlock } from "./types";
 
 export type StoreMessageResult = {
@@ -158,6 +161,24 @@ export function storeSession(
   // Compute and persist density score after all sidecar rows are written
   const { score } = computeDensityScore(db as any, sessionId);
   updateDensityScore(db as any, sessionId, score);
+
+  // Auto-enrich with query aliases (non-blocking, best-effort)
+  if (getSessionQueryCount(db as any, sessionId) === 0) {
+    const session = db.prepare(`SELECT title, summary FROM memory_sessions WHERE id = ?`).get(sessionId) as { title: string; summary: string | null } | null;
+    if (session?.title) {
+      const input = session.title + (session.summary ? ". " + session.summary : "");
+      try {
+        const store = getQmdStore();
+        // Fire-and-forget: don't await, never block ingest
+        store.internal.expandQuery(input).then((expanded) => {
+          const queryTexts = expanded.map(e => e.query).filter(Boolean);
+          insertSessionQueries(db as any, sessionId, queryTexts, "auto");
+        }).catch(() => { /* LLM unavailable, skip silently */ });
+      } catch {
+        // Store not initialized or LLM unavailable — skip silently
+      }
+    }
+  }
 }
 
 export function storeCosts(

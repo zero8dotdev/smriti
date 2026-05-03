@@ -134,7 +134,83 @@ export function searchFiltered(
     LIMIT ?
   `;
 
-  return db.prepare(sql).all(...params) as SearchResult[];
+  const ftsRows = db.prepare(sql).all(...params) as SearchResult[];
+
+  // Also search query aliases (from smriti enrich --queries) and merge in sessions
+  // not already surfaced by FTS.
+  const labelRows = searchByQueryAliases(db, query, filters, limit);
+  const seenSessions = new Set(ftsRows.map(r => r.session_id));
+  const novelFromLabels = labelRows.filter(r => !seenSessions.has(r.session_id));
+
+  return [...ftsRows, ...novelFromLabels].slice(0, limit);
+}
+
+// =============================================================================
+// Query Alias Search (#60)
+// =============================================================================
+
+/**
+ * Find sessions via smriti_queries_fts (enriched aliases) and return their
+ * representative top message as SearchResults with source='query_alias'.
+ */
+function searchByQueryAliases(
+  db: Database,
+  query: string,
+  filters: SearchFilters,
+  limit: number
+): SearchResult[] {
+  // Check table exists (enrichment is optional)
+  const tableExists = (db as any)
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='smriti_queries_fts'`)
+    .get();
+  if (!tableExists) return [];
+
+  const aliasConditions: string[] = ["smriti_queries_fts MATCH ?", "ms.active = 1"];
+  const aliasParams: any[] = [query];
+
+  if (filters.project) {
+    aliasConditions.push("sm.project_id = ?");
+    aliasParams.push(filters.project);
+  }
+  if (filters.agent) {
+    aliasConditions.push("sm.agent_id = ?");
+    aliasParams.push(filters.agent);
+  }
+  if (filters.category) {
+    aliasConditions.push(
+      `EXISTS (SELECT 1 FROM smriti_session_tags st WHERE st.session_id = sq.session_id
+        AND (st.category_id = ? OR st.category_id LIKE ? || '/%'))`
+    );
+    aliasParams.push(filters.category, filters.category);
+  }
+  aliasParams.push(limit);
+
+  const sql = `
+    SELECT DISTINCT
+      mm.session_id,
+      ms.title AS session_title,
+      mm.id AS message_id,
+      mm.role,
+      mm.content,
+      0.5 AS score,
+      'query_alias' AS source,
+      sm.project_id AS project,
+      sm.agent_id AS agent
+    FROM smriti_queries_fts
+    JOIN smriti_session_queries sq ON sq.rowid = smriti_queries_fts.rowid
+    JOIN memory_sessions ms ON ms.id = sq.session_id
+    JOIN memory_messages mm ON mm.session_id = sq.session_id
+      AND mm.id = (SELECT MIN(id) FROM memory_messages WHERE session_id = sq.session_id)
+    LEFT JOIN smriti_session_meta sm ON sm.session_id = sq.session_id
+    WHERE ${aliasConditions.join(" AND ")}
+    LIMIT ?
+  `;
+
+  try {
+    return (db as any).prepare(sql).all(...aliasParams) as SearchResult[];
+  } catch {
+    return [];
+  }
 }
 
 // =============================================================================

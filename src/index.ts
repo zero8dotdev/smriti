@@ -7,7 +7,7 @@
  * schema-based categorization, and team knowledge sharing.
  */
 
-import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, getTagUsage, computeDensityScore, updateDensityScore } from "./db";
+import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, getTagUsage, computeDensityScore, updateDensityScore, insertSessionQueries, getUnenrichedSessionIds } from "./db";
 import { getMessages, getSession, getMemoryStatus, embedMemoryMessages } from "./qmd";
 import { ingest, ingestAll } from "./ingest/index";
 import { categorizeUncategorized } from "./categorize/classifier";
@@ -116,7 +116,7 @@ Commands:
   projects [id]                List projects or inspect a project
   insights [subcommand]        Cost & usage analysis dashboard
   embed                        Embed new messages for vector search
-  enrich [--density]           Compute/update density scores for sessions
+  enrich [--density] [--queries] Compute/update density scores or query labels
   digest [options]             Show work digest for a time window
   upgrade                      Update smriti to the latest version
   help                         Show this help
@@ -184,12 +184,16 @@ Examples:
   smriti sync
   smriti insights --json
   smriti enrich --density
+  smriti enrich --queries
+  smriti enrich --queries --project myapp --dry-run
   smriti digest
   smriti digest --days 14 --project myapp --synthesize
   smriti upgrade
 
 Enrich options:
   --density                    Recompute density scores for all sessions
+  --queries                    Generate search aliases via LLM query expansion
+  --dry-run                    Print what would be generated, don't write
 
 Digest options:
   --days <n>                   Lookback window in days (default: 7)
@@ -905,37 +909,83 @@ async function main() {
       // =====================================================================
       case "enrich": {
         const density = hasFlag(args, "--density");
+        const queries = hasFlag(args, "--queries");
         const sessionFilter = getArg(args, "--session");
+        const projectFilter = getArg(args, "--project");
+        const dryRun = hasFlag(args, "--dry-run");
 
-        if (!density) {
-          console.error("Usage: smriti enrich --density [--session <id>]");
+        if (!density && !queries) {
+          console.error("Usage: smriti enrich --density | --queries [--session <id>] [--project <id>] [--dry-run]");
           process.exit(1);
         }
 
-        // Backfill density scores for all (or one) session
-        let sessionIds: string[];
-        if (sessionFilter) {
-          sessionIds = [sessionFilter];
-        } else {
-          sessionIds = (
-            db.prepare(`SELECT session_id FROM smriti_session_meta`).all() as { session_id: string }[]
-          ).map((r) => r.session_id);
-        }
-
-        console.log(`Computing density scores for ${sessionIds.length} session${sessionIds.length === 1 ? "" : "s"}...`);
-        let updated = 0;
-        for (const sid of sessionIds) {
-          const breakdown = computeDensityScore(db, sid);
-          updateDensityScore(db, sid, breakdown.score);
-          updated++;
+        if (density) {
+          // Backfill density scores for all (or one) session
+          let sessionIds: string[];
           if (sessionFilter) {
-            // Show breakdown for single session
-            console.log(formatDensityBreakdown(breakdown));
+            sessionIds = [sessionFilter];
+          } else {
+            sessionIds = (
+              db.prepare(`SELECT session_id FROM smriti_session_meta`).all() as { session_id: string }[]
+            ).map((r) => r.session_id);
+          }
+
+          console.log(`Computing density scores for ${sessionIds.length} session${sessionIds.length === 1 ? "" : "s"}...`);
+          let updated = 0;
+          for (const sid of sessionIds) {
+            const breakdown = computeDensityScore(db, sid);
+            updateDensityScore(db, sid, breakdown.score);
+            updated++;
+            if (sessionFilter) {
+              console.log(formatDensityBreakdown(breakdown));
+            }
+          }
+          if (!sessionFilter) {
+            console.log(`Updated ${updated} density scores.`);
           }
         }
-        if (!sessionFilter) {
-          console.log(`Updated ${updated} density scores.`);
+
+        if (queries) {
+          const { getQmdStore } = await import("./store");
+          const sessionIds = sessionFilter
+            ? [sessionFilter]
+            : getUnenrichedSessionIds(db, projectFilter || undefined);
+
+          console.log(`Enriching ${sessionIds.length} session${sessionIds.length === 1 ? "" : "s"} with query labels...`);
+          let enriched = 0;
+          let skipped = 0;
+
+          for (let i = 0; i < sessionIds.length; i++) {
+            const sid = sessionIds[i]!;
+            const session = db.prepare(`SELECT title, summary FROM memory_sessions WHERE id = ?`).get(sid) as { title: string; summary: string | null } | null;
+            if (!session?.title) { skipped++; continue; }
+
+            const input = session.title + (session.summary ? ". " + session.summary : "");
+            process.stdout.write(`  [${i + 1}/${sessionIds.length}] ${session.title.slice(0, 60)}...`);
+
+            try {
+              const store = getQmdStore();
+              const expanded = await store.internal.expandQuery(input);
+              const queryTexts = expanded.map(e => e.query).filter(Boolean);
+
+              if (dryRun) {
+                console.log(`\n    → ${queryTexts.join(" | ")}`);
+              } else {
+                const n = insertSessionQueries(db, sid, queryTexts);
+                process.stdout.write(` +${n}\n`);
+                enriched++;
+              }
+            } catch {
+              process.stdout.write(` (LLM unavailable, skipped)\n`);
+              skipped++;
+            }
+          }
+
+          if (!dryRun) {
+            console.log(`\nEnriched ${enriched} sessions${skipped > 0 ? `, skipped ${skipped}` : ""}.`);
+          }
         }
+
         break;
       }
 
