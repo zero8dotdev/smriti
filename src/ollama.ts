@@ -207,6 +207,61 @@ export async function ollamaDrift(
   return resp.message.content.trim();
 }
 
+export type ConflictResult = {
+  pair: [number, number];
+  description: string;
+};
+
+/**
+ * Detect contradictory pairs among recall results.
+ * Returns a list of conflicting index pairs with descriptions.
+ * Uses one Ollama call for all pairs (batch approach).
+ */
+export async function ollamaCheckConflicts(
+  topic: string,
+  passages: { n: number; title: string; content: string }[],
+  options: OllamaChatOptions = {}
+): Promise<ConflictResult[]> {
+  const formatted = passages
+    .map(p => `[${p.n}] ${p.title}\n${p.content.slice(0, 300)}`)
+    .join("\n\n---\n\n");
+
+  const messages: OllamaChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "You detect contradictions between engineering decision records. " +
+        "Given numbered passages about the same topic, identify pairs that express conflicting approaches. " +
+        "Format each conflict as: CONFLICT [i] vs [j]: one-sentence description\n" +
+        "If no conflicts exist, output only: NO_CONFLICTS",
+    },
+    {
+      role: "user",
+      content: `Topic: ${topic}\n\nPassages:\n${formatted}`,
+    },
+  ];
+
+  const resp = await ollamaChat(messages, {
+    ...options,
+    temperature: 0.1,
+    maxTokens: options.maxTokens ?? 256,
+  });
+
+  const text = resp.message.content.trim();
+  if (text.startsWith("NO_CONFLICTS")) return [];
+
+  const results: ConflictResult[] = [];
+  const conflictRe = /CONFLICT\s+\[(\d+)\]\s+vs\s+\[(\d+)\]:\s*(.+)/gi;
+  let match;
+  while ((match = conflictRe.exec(text)) !== null) {
+    results.push({
+      pair: [parseInt(match[1]!), parseInt(match[2]!)],
+      description: match[3]!.trim(),
+    });
+  }
+  return results;
+}
+
 /**
  * Check if Ollama is running and accessible.
  * Pings the /api/tags endpoint.

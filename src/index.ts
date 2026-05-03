@@ -56,7 +56,7 @@ import {
   json,
 } from "./format";
 import { generateDigest } from "./digest";
-import { ollamaAsk, ollamaDrift } from "./ollama";
+import { ollamaAsk, ollamaDrift, ollamaCheckConflicts } from "./ollama";
 
 // =============================================================================
 // Arg Parsing Helpers
@@ -155,6 +155,7 @@ Recall options:
   --max-tokens <n>             Max synthesis tokens
   --fast                       Skip query expansion and reranking
   --wide                       Search all projects (rerank with current project as intent)
+  --check-conflicts            Detect contradictions among recall results (opt-in, uses Ollama)
 
 Context options:
   --project <id>               Project filter (auto-detect from cwd)
@@ -335,6 +336,9 @@ async function main() {
           wide: wideMode,
         });
 
+        const checkConflicts = hasFlag(args, "--check-conflicts");
+        const conflictThreshold = parseFloat(process.env.SMRITI_CONFLICT_THRESHOLD || "0.7");
+
         // In --wide mode, look up project info for cross-project badge
         if (wideMode && recallProject && result.results.length > 0) {
           const sessionIds = result.results.map(r => r.session_id);
@@ -351,13 +355,40 @@ async function main() {
           }
         }
 
+        // Contradiction detection (opt-in)
+        let conflicts: { pair: [number, number]; description: string }[] = [];
+        if (checkConflicts && result.results.length >= 2) {
+          const passages = result.results.slice(0, 5).map((r, i) => ({
+            n: i + 1,
+            title: r.session_title || r.session_id,
+            content: r.content,
+          }));
+          try {
+            conflicts = await ollamaCheckConflicts(query, passages);
+          } catch {
+            // Ollama unavailable — skip conflict detection
+          }
+        }
+
         if (hasFlag(args, "--json")) {
-          console.log(json(result));
+          console.log(json({ ...result, conflicts }));
         } else {
           console.log(formatSearchResults(result.results));
           if (result.synthesis) {
             console.log("\n--- Synthesis ---\n");
             console.log(result.synthesis);
+          }
+          if (conflicts.length > 0) {
+            console.log("\n⚠  Conflicts detected:");
+            for (const c of conflicts) {
+              const a = result.results[c.pair[0] - 1];
+              const b = result.results[c.pair[1] - 1];
+              console.log(`  [${c.pair[0]}] vs [${c.pair[1]}]: ${c.description}`);
+              if (a && b) {
+                console.log(`    ${a.session_id} — ${a.session_title || "(untitled)"}`);
+                console.log(`    ${b.session_id} — ${b.session_title || "(untitled)"}`);
+              }
+            }
           }
         }
         break;
