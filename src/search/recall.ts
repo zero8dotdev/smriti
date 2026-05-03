@@ -17,6 +17,7 @@ export type RecallOptions = SearchFilters & {
   synthesize?: boolean;
   model?: string;
   maxTokens?: number;
+  fast?: boolean;
 };
 
 export type RecallResult = {
@@ -48,6 +49,7 @@ export async function recall(
       synthesize: options.synthesize,
       model: options.model,
       maxTokens: options.maxTokens,
+      fast: options.fast,
     });
     return {
       results: qmdResult.results,

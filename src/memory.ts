@@ -682,6 +682,7 @@ export async function summarizeRecentSessions(
 /**
  * Recall relevant memories for a query.
  * Combines FTS + vector search using RRF, deduplicates by session,
+ * optionally expands query + reranks (skipped when fast=true),
  * and optionally synthesizes via Ollama.
  */
 export async function recallMemories(
@@ -692,20 +693,25 @@ export async function recallMemories(
     synthesize?: boolean;
     model?: string;
     maxTokens?: number;
+    fast?: boolean;
   } = {}
 ): Promise<{ results: MemorySearchResult[]; synthesis?: string }> {
   const startedAt = performance.now();
   const shouldTraceRecall = process.env.SMRITI_BENCH_TRACE === "1";
   const limit = options.limit ?? 10;
+  const fast = options.fast ?? false;
 
-  // Run FTS and vector search
+  // Candidate fetch size — fetch more when reranking to feed the reranker
+  const candidateLimit = fast ? limit : Math.max(limit * 4, 40);
+
+  // Run FTS and vector search for the original query
   const ftsStartedAt = performance.now();
-  const ftsResults = searchMemoryFTS(db, query, limit);
+  const ftsResults = searchMemoryFTS(db, query, candidateLimit);
   const ftsMs = performance.now() - ftsStartedAt;
   let vecResults: MemorySearchResult[] = [];
   const vecStartedAt = performance.now();
   try {
-    vecResults = await searchMemoryVec(db, query, limit);
+    vecResults = await searchMemoryVec(db, query, candidateLimit);
   } catch {
     // Vector search may fail if no embeddings exist
   }
@@ -721,12 +727,38 @@ export async function recallMemories(
       score: r.score,
     }));
 
-  // Fuse results with RRF
+  // Build ranked lists — start with original query results
+  const rankedLists: RankedResult[][] = [toRanked(ftsResults), toRanked(vecResults)];
+  const rankWeights: number[] = [1.0, 1.0];
+
+  // Quality mode: expand query variants and fold in their results
+  if (!fast) {
+    try {
+      const store = getQmdStore();
+      const expanded = await store.internal.expandQuery(query);
+      for (const variant of expanded) {
+        // lex variants are best suited for FTS; vec/hyde for vector search
+        const variantFts = searchMemoryFTS(db, variant.query, candidateLimit);
+        rankedLists.push(toRanked(variantFts));
+        rankWeights.push(0.7);
+        if (variant.type !== "lex") {
+          try {
+            const variantVec = await searchMemoryVec(db, variant.query, candidateLimit);
+            rankedLists.push(toRanked(variantVec));
+            rankWeights.push(0.7);
+          } catch {
+            // skip if no embeddings
+          }
+        }
+      }
+    } catch {
+      // LLM unavailable — fall through with original results only
+    }
+  }
+
+  // Fuse all ranked lists with RRF
   const fuseStartedAt = performance.now();
-  const fused = reciprocalRankFusion(
-    [toRanked(ftsResults), toRanked(vecResults)],
-    [1.0, 1.0]
-  );
+  const fused = reciprocalRankFusion(rankedLists, rankWeights);
   const fuseMs = performance.now() - fuseStartedAt;
 
   // Deduplicate by session, keeping best score per session
@@ -767,6 +799,30 @@ export async function recallMemories(
     }
   }
   const dedupeMs = performance.now() - dedupeStartedAt;
+
+  // Quality mode: rerank the deduped candidates before density blending
+  if (!fast && dedupedResults.length > 1) {
+    try {
+      const store = getQmdStore();
+      const docs = dedupedResults.map((r) => ({
+        file: `${r.session_id}:${r.message_id}`,
+        text: r.content,
+      }));
+      const reranked = await store.internal.rerank(query, docs);
+      const scoreMap = new Map(reranked.map((r) => [r.file, r.score]));
+      for (const r of dedupedResults) {
+        const key = `${r.session_id}:${r.message_id}`;
+        const rerankerScore = scoreMap.get(key);
+        if (rerankerScore !== undefined) {
+          // Blend: 60% reranker + 40% RRF to stay anchored to retrieval signal
+          r.score = rerankerScore * 0.6 + r.score * 0.4;
+        }
+      }
+      dedupedResults.sort((a, b) => b.score - a.score);
+    } catch {
+      // Reranker unavailable — keep RRF order
+    }
+  }
 
   // Blend density scores into recall scores — dense sessions rank higher
   if (dedupedResults.length > 0) {

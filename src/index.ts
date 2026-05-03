@@ -150,6 +150,7 @@ Recall options:
   --synthesize                 Synthesize results via Ollama
   --model <name>               Ollama model for synthesis
   --max-tokens <n>             Max synthesis tokens
+  --fast                       Skip query expansion and reranking
 
 Context options:
   --project <id>               Project filter (auto-detect from cwd)
@@ -319,6 +320,7 @@ async function main() {
           includeArtifacts: !hasFlag(args, "--no-artifacts"),
           includeAttachments: !hasFlag(args, "--no-attachments"),
           includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
+          fast: hasFlag(args, "--fast"),
         });
 
         if (hasFlag(args, "--json")) {
