@@ -2,7 +2,7 @@
  * test/team.test.ts - Tests for team sharing pipeline utilities
  */
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
 import { isValidCategory } from "../src/categorize/schema";
 import { parseFrontmatter } from "../src/team/sync";
 import { initSmriti, closeDb } from "../src/db";
@@ -12,7 +12,9 @@ import type { Database } from "bun:sqlite";
 // Setup
 // =============================================================================
 
-const db: Database = initSmriti(":memory:");
+let db: Database;
+beforeAll(async () => { db = await initSmriti(":memory:"); });
+afterAll(() => closeDb());
 
 // =============================================================================
 // Tag Parsing Tests

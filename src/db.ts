@@ -3,14 +3,17 @@
  *
  * Uses the shared QMD SQLite database. All Smriti tables are prefixed with
  * `smriti_` to avoid collisions. Does NOT alter existing QMD tables.
+ *
+ * DB lifecycle: initSmriti() → createStore() (SDK) → setQmdStore() → initializeSmritiTables()
  */
 
 import { Database } from "bun:sqlite";
-import * as sqliteVec from "sqlite-vec";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
 import { QMD_DB_PATH } from "./config";
 import { initializeMemoryTables } from "./qmd";
+import { createStore } from "../qmd/src/index";
+import { setQmdStore, closeQmdStore } from "./store";
 
 // =============================================================================
 // Connection
@@ -18,93 +21,16 @@ import { initializeMemoryTables } from "./qmd";
 
 let _db: Database | null = null;
 
-/** Initialize QMD store tables (content, documents, vectors, etc) */
-function initializeQmdStore(db: Database): void {
-  // Load sqlite-vec extension
-  sqliteVec.load(db);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-
-  // Create content-addressable storage
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS content (
-      hash TEXT PRIMARY KEY,
-      doc TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `);
-
-  // Documents table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      collection TEXT NOT NULL,
-      path TEXT NOT NULL,
-      title TEXT NOT NULL,
-      hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      modified_at TEXT NOT NULL,
-      active INTEGER NOT NULL DEFAULT 1,
-      FOREIGN KEY (hash) REFERENCES content(hash) ON DELETE CASCADE,
-      UNIQUE(collection, path)
-    )
-  `);
-
-  // Content vectors - required for vector search
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS content_vectors (
-      hash TEXT NOT NULL,
-      seq INTEGER NOT NULL DEFAULT 0,
-      pos INTEGER NOT NULL DEFAULT 0,
-      model TEXT NOT NULL,
-      embedded_at TEXT NOT NULL,
-      PRIMARY KEY (hash, seq)
-    )
-  `);
-
-  // vectors_vec is managed by QMD at embedding time because dimensions depend on
-  // the active embedding model. Do not eagerly create it here.
-  // Migration: older Smriti versions created an incompatible vectors_vec table
-  // (embedding-only, no hash_seq), which breaks embed/search paths.
-  try {
-    const vecTable = db
-      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='vectors_vec'`)
-      .get() as { sql: string } | null;
-
-    if (vecTable?.sql && !vecTable.sql.includes("hash_seq")) {
-      db.exec(`DROP TABLE IF EXISTS vectors_vec`);
-    }
-  } catch {
-    // If sqlite-vec isn't loaded or table introspection fails, continue.
-  }
-}
-
-/** Get or create the shared database connection */
-export function getDb(path?: string): Database {
-  if (_db) return _db;
-  const dbPath = path || QMD_DB_PATH;
-  // Ensure parent directory exists before creating database file
-  const dbDir = dirname(dbPath);
-  if (dbDir !== ".") {
-    try {
-      mkdirSync(dbDir, { recursive: true });
-    } catch {
-      // Directory might already exist or be inaccessible (unlikely in normal cases)
-    }
-  }
-  _db = new Database(dbPath);
-  initializeQmdStore(_db);
-  // Also initialize QMD memory tables (sessions, messages)
-  initializeMemoryTables(_db);
+/** Return the cached DB connection. Throws if initSmriti() hasn't been called. */
+export function getDb(): Database {
+  if (!_db) throw new Error("Database not initialized — call initSmriti() first");
   return _db;
 }
 
-/** Close the database connection */
+/** Close the database and release the QMD store. */
 export function closeDb(): void {
-  if (_db) {
-    _db.close();
-    _db = null;
-  }
+  _db = null;
+  closeQmdStore();
 }
 
 // =============================================================================
@@ -664,11 +590,20 @@ export function migrateFTSToV2(db: Database): void {
 // Convenience
 // =============================================================================
 
-/** Initialize DB, create tables, seed defaults. Returns the DB instance. */
-export function initSmriti(dbPath?: string): Database {
-  const db = getDb(dbPath);
-  // getDb() now calls createStore() which initializes QMD tables,
-  // so we just need to initialize Smriti tables
+/**
+ * Initialize the QMD SDK store, then create all Smriti tables.
+ * Returns the underlying bun:sqlite Database for Smriti table operations.
+ */
+export async function initSmriti(dbPath?: string): Promise<Database> {
+  const resolvedPath = dbPath || QMD_DB_PATH;
+  if (resolvedPath !== ":memory:") {
+    try { mkdirSync(dirname(resolvedPath), { recursive: true }); } catch { /* exists */ }
+  }
+  const store = await createStore({ dbPath: resolvedPath });
+  setQmdStore(store);
+  const db = store.internal.db as unknown as Database;
+  _db = db;
+  initializeMemoryTables(db as any);
   initializeSmritiTables(db);
   seedDefaults(db);
   migrateFTSToV2(db);

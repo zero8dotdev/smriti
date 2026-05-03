@@ -18,16 +18,19 @@ import type { Database } from "../qmd/src/db";
 import {
   hashContent,
   chunkDocumentByTokens,
-  insertEmbedding,
   reciprocalRankFusion,
-  type RankedResult,
-} from "../qmd/src/store.js";
-import {
-  getDefaultLlamaCpp,
   formatQueryForEmbedding,
   formatDocForEmbedding,
-} from "../qmd/src/llm.js";
+  type RankedResult,
+} from "../qmd/src/store.js";
+import { getQmdStore } from "./store";
 import { ollamaSummarize, ollamaRecall as ollamaRecallSynthesize } from "./ollama";
+
+// Returns the LLM instance from the SDK store (set during initSmriti).
+// Throws if called before initSmriti() — only vector search + embed paths use this.
+function getMemoryLlm() {
+  return getQmdStore().internal.llm!;
+}
 
 // =============================================================================
 // Types
@@ -442,7 +445,7 @@ export async function searchMemoryVec(
   if (!tableExists) return [];
 
   // Get query embedding
-  const llm = getDefaultLlamaCpp();
+  const llm = getMemoryLlm();
   const formattedQuery = formatQueryForEmbedding(query);
   const result = await llm.embed(formattedQuery, { isQuery: true });
   if (!result) return [];
@@ -549,7 +552,7 @@ export async function embedMemoryMessages(
 
   if (unembedded.length === 0) return 0;
 
-  const llm = getDefaultLlamaCpp();
+  const llm = getMemoryLlm();
   let embedded = 0;
 
   for (const msg of unembedded) {
@@ -579,8 +582,7 @@ export async function embedMemoryMessages(
     const now = new Date().toISOString();
 
     // Insert first chunk embedding
-    insertEmbedding(
-      db,
+    getQmdStore().internal.insertEmbedding(
       msg.hash,
       0,
       chunks[0]!.pos,
@@ -595,8 +597,7 @@ export async function embedMemoryMessages(
       const text = formatDocForEmbedding(chunk.text);
       const embedResult = await llm.embed(text);
       if (embedResult) {
-        insertEmbedding(
-          db,
+        getQmdStore().internal.insertEmbedding(
           msg.hash,
           i,
           chunk.pos,

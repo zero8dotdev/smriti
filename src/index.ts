@@ -214,7 +214,7 @@ async function main() {
   }
 
   // Initialize DB
-  const db = initSmriti();
+  const db = await initSmriti();
 
   try {
     switch (command) {
