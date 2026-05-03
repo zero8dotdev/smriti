@@ -56,7 +56,7 @@ import {
   json,
 } from "./format";
 import { generateDigest } from "./digest";
-import { ollamaAsk } from "./ollama";
+import { ollamaAsk, ollamaDrift } from "./ollama";
 
 // =============================================================================
 // Arg Parsing Helpers
@@ -119,6 +119,7 @@ Commands:
   embed                        Embed new messages for vector search
   enrich [--density] [--queries] Compute/update density scores or query labels
   ask <question>               Answer a question from work history (RAG)
+  drift <topic>                Show how thinking on a topic evolved over time
   digest [options]             Show work digest for a time window
   upgrade                      Update smriti to the latest version
   help                         Show this help
@@ -1075,6 +1076,105 @@ async function main() {
 
           if (!dryRun) {
             console.log(`\nEnriched ${enriched} sessions${skipped > 0 ? `, skipped ${skipped}` : ""}.`);
+          }
+        }
+
+        break;
+      }
+
+      // =====================================================================
+      // DRIFT (temporal evolution)
+      // =====================================================================
+      case "drift": {
+        const driftTopic = args[1];
+        if (!driftTopic) {
+          console.error('Usage: smriti drift "<topic>" [options]');
+          process.exit(1);
+        }
+
+        const driftProject = getArg(args, "--project");
+        const driftSince = getArg(args, "--since");
+        const driftLimit = Number(getArg(args, "--limit")) || 10;
+        const noSynthesizeDrift = hasFlag(args, "--no-synthesize");
+
+        // Recall all matching sessions (high limit, no session dedup — we want all mentions)
+        const driftResult = await recall(db, driftTopic, {
+          limit: driftLimit * 2,
+          synthesize: false,
+          project: driftProject || undefined,
+          fast: false,
+        });
+
+        if (driftResult.results.length < 2) {
+          console.log("Not enough history to show evolution.");
+          if (driftResult.results.length === 1) {
+            console.log(formatSearchResults(driftResult.results));
+          }
+          break;
+        }
+
+        // Enrich with session dates from memory_sessions
+        const sessionIds = [...new Set(driftResult.results.map(r => r.session_id))];
+        const placeholders = sessionIds.map(() => "?").join(",");
+        const dateRows = db.prepare(
+          `SELECT id, created_at, updated_at FROM memory_sessions WHERE id IN (${placeholders})`
+        ).all(...sessionIds) as { id: string; created_at: string; updated_at: string }[];
+        const dateMap = new Map(dateRows.map(r => [r.id, r]));
+
+        // Filter by --since if given
+        let filteredResults = driftResult.results;
+        if (driftSince) {
+          const sinceDate = new Date(driftSince).getTime();
+          filteredResults = filteredResults.filter(r => {
+            const d = dateMap.get(r.session_id);
+            return d ? new Date(d.created_at).getTime() >= sinceDate : true;
+          });
+        }
+
+        // Deduplicate by session and sort chronologically
+        const seenSessions = new Set<string>();
+        const chronological = filteredResults
+          .filter(r => {
+            if (seenSessions.has(r.session_id)) return false;
+            seenSessions.add(r.session_id);
+            return true;
+          })
+          .sort((a, b) => {
+            const da = dateMap.get(a.session_id)?.created_at ?? "";
+            const db2 = dateMap.get(b.session_id)?.created_at ?? "";
+            return da.localeCompare(db2);
+          })
+          .slice(0, driftLimit);
+
+        if (hasFlag(args, "--json")) {
+          const timeline = chronological.map((r, i) => ({
+            n: i + 1,
+            session_id: r.session_id,
+            session_title: r.session_title,
+            date: dateMap.get(r.session_id)?.created_at,
+            content: r.content,
+          }));
+          console.log(json({ topic: driftTopic, timeline }));
+          break;
+        }
+
+        console.log(`\n${driftTopic} — evolution across ${chronological.length} session${chronological.length === 1 ? "" : "s"}\n`);
+        const timelineText = chronological.map(r => {
+          const d = dateMap.get(r.session_id);
+          const date = d ? new Date(d.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?";
+          const proj = (r as any).project ? ` [${(r as any).project}]` : (driftProject ? ` [${driftProject}]` : "");
+          return `${date}${proj}  ${r.session_title || r.session_id}\n  ${r.content.slice(0, 200)}`;
+        }).join("\n\n");
+
+        console.log(timelineText);
+
+        if (!noSynthesizeDrift) {
+          try {
+            const narrative = await ollamaDrift(driftTopic, timelineText);
+            console.log("\n--- Evolution narrative ---\n");
+            console.log(narrative);
+          } catch {
+            // Ollama unavailable — timeline shown above is the fallback
           }
         }
 

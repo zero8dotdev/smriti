@@ -175,6 +175,39 @@ export async function ollamaAsk(
 }
 
 /**
+ * Synthesize how thinking on a topic evolved across a chronological session timeline.
+ * Returns a narrative string showing key shifts, decisions, and reversals.
+ */
+export async function ollamaDrift(
+  topic: string,
+  timeline: string,
+  options: OllamaChatOptions = {}
+): Promise<string> {
+  const messages: OllamaChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "You are an engineering historian. Given a chronological timeline of sessions about a topic, " +
+        "describe how the team's thinking evolved. Focus on: decisions made, approaches tried, " +
+        "reversals, refinements, and the current state. Use a compact timeline format: " +
+        "one sentence per significant change. Highlight turning points. Output only the narrative.",
+    },
+    {
+      role: "user",
+      content: `Topic: ${topic}\n\nTimeline:\n${timeline}`,
+    },
+  ];
+
+  const resp = await ollamaChat(messages, {
+    ...options,
+    temperature: options.temperature ?? 0.3,
+    maxTokens: options.maxTokens ?? 768,
+  });
+
+  return resp.message.content.trim();
+}
+
+/**
  * Check if Ollama is running and accessible.
  * Pings the /api/tags endpoint.
  */
