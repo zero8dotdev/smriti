@@ -815,6 +815,159 @@ export function listAgents(db: Database): Array<{
 }
 
 // =============================================================================
+// Project Inspection
+// =============================================================================
+
+export type ProjectInspectReport = {
+  project: {
+    id: string;
+    path: string | null;
+    description: string | null;
+    language: string | null;
+    framework: string | null;
+  } | null;
+  sessionCount: number;
+  messageCount: number;
+  byAgent: Array<{ agent_id: string | null; session_count: number }>;
+  tags: Array<{ category_id: string; session_count: number }>;
+  decisionCount: number;
+  recentSessions: Array<{
+    id: string;
+    title: string;
+    updated_at: string;
+    agent_id: string | null;
+    categories: string;
+  }>;
+};
+
+export type TagUsageEntry = {
+  category_id: string;
+  session_count: number;
+  display_name?: string | null;
+};
+
+export function getTagUsage(db: Database, projectId?: string): TagUsageEntry[] {
+  let query = `
+    SELECT st.category_id, COUNT(DISTINCT st.session_id) as session_count
+    FROM smriti_session_tags st`;
+
+  if (projectId) {
+    query += `
+      JOIN smriti_session_meta sm ON st.session_id = sm.session_id
+      WHERE sm.project_id = ?`;
+  }
+
+  query += `
+    GROUP BY st.category_id
+    ORDER BY session_count DESC`;
+
+  const results = projectId
+    ? (db.prepare(query).all(projectId) as Array<{ category_id: string; session_count: number }>)
+    : (db.prepare(query).all() as Array<{ category_id: string; session_count: number }>);
+
+  return results;
+}
+
+export function getProjectReport(db: Database, projectId: string): ProjectInspectReport | null {
+  // Get project details
+  const projectRow = db
+    .prepare(`SELECT id, path, description, language, framework FROM smriti_projects WHERE id = ?`)
+    .get(projectId) as any;
+
+  if (!projectRow) {
+    return null;
+  }
+
+  // Session count
+  const sessionCountRow = db
+    .prepare(`SELECT COUNT(*) as count FROM smriti_session_meta WHERE project_id = ?`)
+    .get(projectId) as { count: number };
+  const sessionCount = sessionCountRow.count;
+
+  // Message count
+  const messageCountRow = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM memory_messages mm
+       JOIN smriti_session_meta sm ON mm.session_id = sm.session_id
+       WHERE sm.project_id = ?`
+    )
+    .get(projectId) as { count: number };
+  const messageCount = messageCountRow.count;
+
+  // Agent breakdown
+  const byAgent = db
+    .prepare(
+      `SELECT sm.agent_id, COUNT(*) as session_count
+       FROM smriti_session_meta sm
+       WHERE sm.project_id = ?
+       GROUP BY sm.agent_id
+       ORDER BY session_count DESC`
+    )
+    .all(projectId) as Array<{ agent_id: string | null; session_count: number }>;
+
+  // Tag breakdown
+  const tags = db
+    .prepare(
+      `SELECT st.category_id, COUNT(DISTINCT st.session_id) as session_count
+       FROM smriti_session_tags st
+       JOIN smriti_session_meta sm ON st.session_id = sm.session_id
+       WHERE sm.project_id = ?
+       GROUP BY st.category_id
+       ORDER BY session_count DESC`
+    )
+    .all(projectId) as Array<{ category_id: string; session_count: number }>;
+
+  // Decision count (decision or decision/*)
+  const decisionRow = db
+    .prepare(
+      `SELECT COUNT(DISTINCT st.session_id) as count
+       FROM smriti_session_tags st
+       JOIN smriti_session_meta sm ON st.session_id = sm.session_id
+       WHERE sm.project_id = ?
+         AND (st.category_id = 'decision' OR st.category_id LIKE 'decision/%')`
+    )
+    .get(projectId) as { count: number };
+  const decisionCount = decisionRow.count;
+
+  // Recent 5 sessions
+  const recentSessions = db
+    .prepare(
+      `SELECT ms.id, ms.title, ms.updated_at, sm.agent_id,
+              COALESCE(GROUP_CONCAT(DISTINCT st.category_id), '') as categories
+       FROM memory_sessions ms
+       JOIN smriti_session_meta sm ON sm.session_id = ms.id
+       LEFT JOIN smriti_session_tags st ON st.session_id = ms.id
+       WHERE sm.project_id = ?
+       GROUP BY ms.id
+       ORDER BY ms.updated_at DESC
+       LIMIT 5`
+    )
+    .all(projectId) as Array<{
+    id: string;
+    title: string;
+    updated_at: string;
+    agent_id: string | null;
+    categories: string;
+  }>;
+
+  return {
+    project: {
+      id: projectRow.id,
+      path: projectRow.path,
+      description: projectRow.description,
+      language: projectRow.language,
+      framework: projectRow.framework,
+    },
+    sessionCount,
+    messageCount,
+    byAgent,
+    tags,
+    decisionCount,
+    recentSessions,
+  };
+}
+
+// =============================================================================
 // Sidecar Table Insert Helpers
 // =============================================================================
 

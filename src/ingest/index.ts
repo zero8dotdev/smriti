@@ -32,6 +32,7 @@ export type IngestOptions = {
   existingSessionIds?: Set<string>;
   onProgress?: (msg: string) => void;
   logsDir?: string;
+  whole?: boolean;
 };
 
 function isStructuredMessage(msg: ParsedMessage | StructuredMessage): msg is StructuredMessage {
@@ -220,6 +221,7 @@ export async function ingest(
     sessionId?: string;
     projectId?: string;
     force?: boolean;
+    whole?: boolean;
   } = {}
 ): Promise<IngestResult> {
   const existingSessionIds = getExistingSessionIds(db);
@@ -369,7 +371,14 @@ export async function ingest(
       }
       const { parseGeneric } = await import("./parsers");
       const sessionId = options.sessionId || `generic-${crypto.randomUUID().slice(0, 8)}`;
-      const parsed = await parseGeneric(options.filePath, sessionId, options.format || "chat");
+      // Determine format: if --whole is specified, use "document" mode
+      let format: "chat" | "jsonl" | "document" = "chat";
+      if (options.whole) {
+        format = "document";
+      } else if (options.format) {
+        format = options.format as "chat" | "jsonl";
+      }
+      const parsed = await parseGeneric(options.filePath, sessionId, format);
       if (options.title) {
         parsed.session.title = options.title;
       }

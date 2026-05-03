@@ -107,12 +107,20 @@ export function formatStatus(stats: {
   agentCounts?: Record<string, number>;
   projectCounts?: Record<string, number>;
   categoryCounts?: Record<string, number>;
+  projectFilter?: string;
 }): string {
-  const lines: string[] = [
+  const lines: string[] = [];
+
+  if (stats.projectFilter) {
+    lines.push(`Status for project: ${stats.projectFilter}`);
+    lines.push("");
+  }
+
+  lines.push(
     `Sessions:      ${stats.sessions} (${stats.activeSessions} active)`,
     `Messages:      ${stats.messages} (${stats.embeddedMessages} embedded)`,
     `Summarized:    ${stats.summarizedSessions}`,
-  ];
+  );
 
   if (stats.agentCounts && Object.keys(stats.agentCounts).length > 0) {
     lines.push("");
@@ -281,6 +289,113 @@ export function formatSyncResult(result: {
     for (const err of result.errors.slice(0, 5)) {
       lines.push(`  - ${err}`);
     }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Project Report Formatting
+// =============================================================================
+
+export function formatProjectReport(
+  report: {
+    project: {
+      id: string;
+      path: string | null;
+      description: string | null;
+      language: string | null;
+      framework: string | null;
+    } | null;
+    sessionCount: number;
+    messageCount: number;
+    byAgent: Array<{ agent_id: string | null; session_count: number }>;
+    tags: Array<{ category_id: string; session_count: number }>;
+    decisionCount: number;
+    recentSessions: Array<{
+      id: string;
+      title: string;
+      updated_at: string;
+      agent_id: string | null;
+      categories: string;
+    }>;
+  },
+  options?: { tagsOnly?: boolean; decisionsOnly?: boolean }
+): string {
+  if (!report.project) return "Project not found.";
+
+  const lines: string[] = [];
+
+  if (!options?.tagsOnly && !options?.decisionsOnly) {
+    lines.push(`Project: ${report.project.id}`);
+    if (report.project.path) lines.push(`Path:    ${report.project.path}`);
+    if (report.project.language) lines.push(`Language: ${report.project.language}`);
+    if (report.project.framework) lines.push(`Framework: ${report.project.framework}`);
+    if (report.project.description) lines.push(`Description: ${report.project.description}`);
+
+    lines.push("");
+    lines.push(`Sessions: ${report.sessionCount}`);
+    lines.push(`Messages: ${report.messageCount.toLocaleString()}`);
+  }
+
+  if (!options?.decisionsOnly) {
+    if (report.tags.length > 0) {
+      lines.push("");
+      lines.push("Tags:");
+      for (const tag of report.tags) {
+        lines.push(`  ${tag.category_id.padEnd(30)}  ${tag.session_count} session${tag.session_count === 1 ? "" : "s"}`);
+      }
+    }
+  }
+
+  if (!options?.tagsOnly) {
+    if (report.byAgent.length > 0 && !options?.decisionsOnly) {
+      lines.push("");
+      lines.push("By Agent:");
+      for (const agent of report.byAgent) {
+        const agentName = agent.agent_id || "(unknown)";
+        lines.push(`  ${agentName.padEnd(20)}  ${agent.session_count} session${agent.session_count === 1 ? "" : "s"}`);
+      }
+    }
+
+    lines.push("");
+    lines.push(`Decisions: ${report.decisionCount} session${report.decisionCount === 1 ? "" : "s"} tagged decision/*`);
+
+    if (report.recentSessions.length > 0) {
+      lines.push("");
+      lines.push("Recent Sessions:");
+      for (const sess of report.recentSessions) {
+        const cats = sess.categories ? ` [${sess.categories}]` : "";
+        lines.push(`  ${sess.id.slice(0, 8)}  ${sess.title || "(untitled)"}${cats}`);
+        lines.push(`             ${sess.updated_at.slice(0, 16)}  ${sess.agent_id || "-"}`);
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Tag Usage Formatting
+// =============================================================================
+
+export function formatTagUsage(
+  usage: Array<{ category_id: string; session_count: number; display_name?: string | null }>,
+  projectFilter?: string
+): string {
+  if (usage.length === 0) {
+    return "No tags in use.";
+  }
+
+  const scope = projectFilter ? `project: ${projectFilter}` : "global";
+  const lines: string[] = [
+    `Tags in use (${scope}):`,
+    "",
+  ];
+
+  for (const tag of usage) {
+    const name = tag.display_name || tag.category_id;
+    lines.push(`  ${name.padEnd(30)}  ${tag.session_count} session${tag.session_count === 1 ? "" : "s"}`);
   }
 
   return lines.join("\n");

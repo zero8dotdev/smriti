@@ -7,7 +7,7 @@
  * schema-based categorization, and team knowledge sharing.
  */
 
-import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession } from "./db";
+import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, type ProjectInspectReport, getTagUsage, type TagUsageEntry } from "./db";
 import { getMessages, getSession, getMemoryStatus, embedMemoryMessages } from "./qmd";
 import { ingest, ingestAll } from "./ingest/index";
 import { categorizeUncategorized } from "./categorize/classifier";
@@ -49,6 +49,8 @@ import {
   formatTeamContributions,
   formatShareResult,
   formatSyncResult,
+  formatProjectReport,
+  formatTagUsage,
   json,
 } from "./format";
 
@@ -98,6 +100,7 @@ Commands:
   tag <session-id> <category>  Manually tag a session
   categories                   List category tree
   categories add <id> [opts]   Add a custom category
+  tags [options]               Show tag usage in sessions
   context [options]             Generate project context for .smriti/CLAUDE.md
   compare <a> <b>              Compare two sessions (tokens, tools, files)
   compare --last               Compare last 2 sessions for current project
@@ -107,7 +110,7 @@ Commands:
   list [filters]               List sessions
   show <session-id>            Show session messages
   status                       Memory statistics
-  projects                     List projects
+  projects [id]                List projects or inspect a project
   insights [subcommand]        Cost & usage analysis dashboard
   embed                        Embed new messages for vector search
   upgrade                      Update smriti to the latest version
@@ -127,9 +130,10 @@ Ingest options:
   smriti ingest cline          Ingest Cline CLI sessions
   smriti ingest copilot        Ingest GitHub Copilot (VS Code) sessions
   smriti ingest cursor --project-path <path>
-  smriti ingest file <path> [--format chat|jsonl] [--title <t>]
+  smriti ingest file <path> [--format chat|jsonl] [--title <t>] [--whole]
   smriti ingest all            Ingest from all known agents (claude, codex, cline, copilot)
   --force                      Re-ingest sessions (delete sidecar data, re-extract)
+  --whole                      Store file as single document (for .md files)
 
 Search content options:
   --include-thinking           Include thinking blocks in search (opt-in)
@@ -219,15 +223,28 @@ async function main() {
           break;
         }
 
+        const filePath = args[2] && !args[2].startsWith("--") ? args[2] : getArg(args, "--file");
+        const isMarkdown = filePath?.endsWith(".md");
+        const whole = hasFlag(args, "--whole");
+
+        // Warn if .md file is being ingested without --whole
+        if (isMarkdown && !whole) {
+          console.warn(
+            "⚠️  Warning: ingesting .md file as chat format splits paragraphs into separate messages. " +
+              "Use --whole to store as a single document."
+          );
+        }
+
         const result = await ingest(db, agent, {
           onProgress: (msg) => console.log(`  ${msg}`),
           projectPath: getArg(args, "--project-path"),
-          filePath: args[2] && !args[2].startsWith("--") ? args[2] : getArg(args, "--file"),
+          filePath,
           format: getArg(args, "--format") as "chat" | "jsonl" | undefined,
           title: getArg(args, "--title"),
           sessionId: getArg(args, "--session"),
           projectId: getArg(args, "--project"),
           force: hasFlag(args, "--force"),
+          whole,
         });
 
         console.log(formatIngestResult(result));
@@ -374,6 +391,45 @@ async function main() {
             }))
           )
         );
+        break;
+      }
+
+      // =====================================================================
+      // TAGS
+      // =====================================================================
+      case "tags": {
+        const showAvailable = hasFlag(args, "--available");
+
+        if (showAvailable) {
+          // Show all available categories (same as categories command)
+          const tree = getCategoryTree(db);
+          const allCats = getCategories(db);
+          console.log(
+            formatCategoryTree(
+              tree,
+              allCats.map((c) => ({
+                id: c.id,
+                name: c.name,
+                description: c.description,
+              }))
+            )
+          );
+          break;
+        }
+
+        // Show tag usage
+        const projectFilter = getArg(args, "--project");
+        const usage = getTagUsage(db, projectFilter);
+
+        if (hasFlag(args, "--json")) {
+          console.log(json(usage));
+        } else {
+          console.log(formatTagUsage(usage, projectFilter));
+          if (usage.length > 0) {
+            console.log("");
+            console.log("Run 'smriti tags --available' to see all available categories.");
+          }
+        }
         break;
       }
 
@@ -554,53 +610,65 @@ async function main() {
       // =====================================================================
       case "status": {
         const baseStatus = getMemoryStatus(db);
+        const projectFilter = getArg(args, "--project");
 
         // Get Smriti-specific counts
         const agentCounts: Record<string, number> = {};
-        const agentRows = db
-          .prepare(
-            `SELECT agent_id, COUNT(*) as count FROM smriti_session_meta
-             WHERE agent_id IS NOT NULL GROUP BY agent_id`
-          )
-          .all() as { agent_id: string; count: number }[];
+        const agentQuery = projectFilter
+          ? `SELECT sm.agent_id, COUNT(*) as count FROM smriti_session_meta sm
+             WHERE sm.agent_id IS NOT NULL AND sm.project_id = ?
+             GROUP BY sm.agent_id`
+          : `SELECT agent_id, COUNT(*) as count FROM smriti_session_meta
+             WHERE agent_id IS NOT NULL GROUP BY agent_id`;
+        const agentRows = (
+          projectFilter
+            ? db.prepare(agentQuery).all(projectFilter)
+            : db.prepare(agentQuery).all()
+        ) as { agent_id: string; count: number }[];
         for (const row of agentRows) {
           agentCounts[row.agent_id] = row.count;
         }
 
         const projectCounts: Record<string, number> = {};
-        const projectRows = db
-          .prepare(
-            `SELECT project_id, COUNT(*) as count FROM smriti_session_meta
-             WHERE project_id IS NOT NULL GROUP BY project_id`
-          )
-          .all() as { project_id: string; count: number }[];
-        for (const row of projectRows) {
-          projectCounts[row.project_id] = row.count;
+        if (!projectFilter) {
+          const projectRows = db
+            .prepare(
+              `SELECT project_id, COUNT(*) as count FROM smriti_session_meta
+               WHERE project_id IS NOT NULL GROUP BY project_id`
+            )
+            .all() as { project_id: string; count: number }[];
+          for (const row of projectRows) {
+            projectCounts[row.project_id] = row.count;
+          }
         }
 
         const categoryCounts: Record<string, number> = {};
-        const catRows = db
-          .prepare(
-            `SELECT category_id, COUNT(*) as count FROM smriti_session_tags
-             GROUP BY category_id ORDER BY count DESC`
-          )
-          .all() as { category_id: string; count: number }[];
+        const catQuery = projectFilter
+          ? `SELECT st.category_id, COUNT(*) as count FROM smriti_session_tags st
+             JOIN smriti_session_meta sm ON st.session_id = sm.session_id
+             WHERE sm.project_id = ?
+             GROUP BY st.category_id ORDER BY count DESC`
+          : `SELECT category_id, COUNT(*) as count FROM smriti_session_tags
+             GROUP BY category_id ORDER BY count DESC`;
+        const catRows = (
+          projectFilter
+            ? db.prepare(catQuery).all(projectFilter)
+            : db.prepare(catQuery).all()
+        ) as { category_id: string; count: number }[];
         for (const row of catRows) {
           categoryCounts[row.category_id] = row.count;
         }
 
+        const output = { ...baseStatus, agentCounts, projectCounts, categoryCounts };
+        if (projectFilter && !hasFlag(args, "--json")) {
+          (output as any).projectFilter = projectFilter;
+        }
+
         if (hasFlag(args, "--json")) {
-          console.log(
-            json({ ...baseStatus, agentCounts, projectCounts, categoryCounts })
-          );
+          console.log(json(output));
         } else {
           console.log(
-            formatStatus({
-              ...baseStatus,
-              agentCounts,
-              projectCounts,
-              categoryCounts,
-            })
+            formatStatus(output as any)
           );
         }
         break;
@@ -610,6 +678,26 @@ async function main() {
       // PROJECTS
       // =====================================================================
       case "projects": {
+        // Check if a project ID is specified (inspect single project)
+        const projectId = args[1];
+        if (projectId && !projectId.startsWith("--")) {
+          const report = getProjectReport(db, projectId);
+          if (!report) {
+            console.error(`Project not found: ${projectId}`);
+            process.exit(1);
+          }
+
+          if (hasFlag(args, "--json")) {
+            console.log(json(report));
+          } else {
+            const tagsOnly = hasFlag(args, "--tags");
+            const decisionsOnly = hasFlag(args, "--decisions");
+            console.log(formatProjectReport(report, { tagsOnly, decisionsOnly }));
+          }
+          break;
+        }
+
+        // List all projects
         const projects = listProjects(db);
         if (projects.length === 0) {
           console.log("No projects registered. Run 'smriti ingest' first.");

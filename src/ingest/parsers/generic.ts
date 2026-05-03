@@ -1,9 +1,10 @@
 import type { ParsedSession } from "./types";
+import { basename } from "path";
 
 export async function parseGeneric(
   sessionPath: string,
   sessionId: string,
-  format: "chat" | "jsonl" = "chat"
+  format: "chat" | "jsonl" | "document" = "chat"
 ): Promise<ParsedSession> {
   const content = await Bun.file(sessionPath).text();
   const messages: Array<{ role: string; content: string; timestamp?: string }> = [];
@@ -13,6 +14,9 @@ export async function parseGeneric(
       const parsed = JSON.parse(line);
       messages.push({ role: parsed.role || "user", content: parsed.content || "" });
     }
+  } else if (format === "document") {
+    // Store entire file as a single user message
+    messages.push({ role: "user", content: content.trim() });
   } else {
     const blocks = content.split(/\n\n+/);
     for (const block of blocks) {
@@ -30,12 +34,20 @@ export async function parseGeneric(
     }
   }
 
-  const firstUser = messages.find((m) => m.role === "user");
+  let title = "";
+  if (format === "document") {
+    // Extract title from first # heading, or use filename
+    const headingMatch = content.match(/^# (.+)/m);
+    title = headingMatch ? headingMatch[1] : basename(sessionPath);
+  } else {
+    const firstUser = messages.find((m) => m.role === "user");
+    title = firstUser ? firstUser.content.slice(0, 100).replace(/\n/g, " ") : "";
+  }
 
   return {
     session: {
       id: sessionId,
-      title: firstUser ? firstUser.content.slice(0, 100).replace(/\n/g, " ") : "",
+      title,
       created_at: messages[0]?.timestamp || new Date().toISOString(),
     },
     messages,
