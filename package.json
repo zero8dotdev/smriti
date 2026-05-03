@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "node-llama-cpp": "^3.0.0",
+    "picomatch": "^4.0.0",
     "qmd": "file:./qmd"
   },
   "devDependencies": {
