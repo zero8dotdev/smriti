@@ -7,7 +7,7 @@
  * schema-based categorization, and team knowledge sharing.
  */
 
-import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, type ProjectInspectReport, getTagUsage, type TagUsageEntry } from "./db";
+import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, getTagUsage, computeDensityScore, updateDensityScore } from "./db";
 import { getMessages, getSession, getMemoryStatus, embedMemoryMessages } from "./qmd";
 import { ingest, ingestAll } from "./ingest/index";
 import { categorizeUncategorized } from "./categorize/classifier";
@@ -51,8 +51,11 @@ import {
   formatSyncResult,
   formatProjectReport,
   formatTagUsage,
+  formatDensityBreakdown,
+  formatDigest,
   json,
 } from "./format";
+import { generateDigest } from "./digest";
 
 // =============================================================================
 // Arg Parsing Helpers
@@ -113,6 +116,8 @@ Commands:
   projects [id]                List projects or inspect a project
   insights [subcommand]        Cost & usage analysis dashboard
   embed                        Embed new messages for vector search
+  enrich [--density]           Compute/update density scores for sessions
+  digest [options]             Show work digest for a time window
   upgrade                      Update smriti to the latest version
   help                         Show this help
 
@@ -177,7 +182,19 @@ Examples:
   smriti share --category decision
   smriti sync
   smriti insights --json
+  smriti enrich --density
+  smriti digest
+  smriti digest --days 14 --project myapp --synthesize
   smriti upgrade
+
+Enrich options:
+  --density                    Recompute density scores for all sessions
+
+Digest options:
+  --days <n>                   Lookback window in days (default: 7)
+  --project <id>               Filter to a specific project
+  --synthesize                 Generate narrative summary via Ollama
+  --model <name>               Ollama model for synthesis
 `;
 
 async function main() {
@@ -877,6 +894,69 @@ async function main() {
           } else {
             console.log(formatOverview(overview, recs));
           }
+        }
+        break;
+      }
+
+      // =====================================================================
+      // ENRICH
+      // =====================================================================
+      case "enrich": {
+        const density = hasFlag(args, "--density");
+        const sessionFilter = getArg(args, "--session");
+
+        if (!density) {
+          console.error("Usage: smriti enrich --density [--session <id>]");
+          process.exit(1);
+        }
+
+        // Backfill density scores for all (or one) session
+        let sessionIds: string[];
+        if (sessionFilter) {
+          sessionIds = [sessionFilter];
+        } else {
+          sessionIds = (
+            db.prepare(`SELECT session_id FROM smriti_session_meta`).all() as { session_id: string }[]
+          ).map((r) => r.session_id);
+        }
+
+        console.log(`Computing density scores for ${sessionIds.length} session${sessionIds.length === 1 ? "" : "s"}...`);
+        let updated = 0;
+        for (const sid of sessionIds) {
+          const breakdown = computeDensityScore(db, sid);
+          updateDensityScore(db, sid, breakdown.score);
+          updated++;
+          if (sessionFilter) {
+            // Show breakdown for single session
+            console.log(formatDensityBreakdown(breakdown));
+          }
+        }
+        if (!sessionFilter) {
+          console.log(`Updated ${updated} density scores.`);
+        }
+        break;
+      }
+
+      // =====================================================================
+      // DIGEST
+      // =====================================================================
+      case "digest": {
+        const days = Number(getArg(args, "--days")) || 7;
+        const project = getArg(args, "--project");
+        const synthesize = hasFlag(args, "--synthesize");
+        const model = getArg(args, "--model");
+
+        const report = await generateDigest(db, {
+          days,
+          project,
+          synthesize,
+          model,
+        });
+
+        if (hasFlag(args, "--json")) {
+          console.log(json(report));
+        } else {
+          console.log(formatDigest(report));
         }
         break;
       }

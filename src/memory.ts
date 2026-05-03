@@ -767,6 +767,25 @@ export async function recallMemories(
   }
   const dedupeMs = performance.now() - dedupeStartedAt;
 
+  // Blend density scores into recall scores — dense sessions rank higher
+  if (dedupedResults.length > 0) {
+    const sessionIds = dedupedResults.map((r) => r.session_id);
+    const placeholders = sessionIds.map(() => "?").join(",");
+    const densityRows = (db as any)
+      .prepare(
+        `SELECT session_id, COALESCE(density_score, 0) as density_score
+         FROM smriti_session_meta WHERE session_id IN (${placeholders})`
+      )
+      .all(...sessionIds) as { session_id: string; density_score: number }[];
+    const densityMap = new Map(densityRows.map((r) => [r.session_id, r.density_score]));
+
+    for (const r of dedupedResults) {
+      const ds = densityMap.get(r.session_id) ?? 0;
+      r.score = r.score * 0.8 + ds * 0.2;
+    }
+    dedupedResults.sort((a, b) => b.score - a.score);
+  }
+
   const results = dedupedResults.slice(0, limit);
 
   // Optionally synthesize via Ollama

@@ -376,6 +376,125 @@ export function formatProjectReport(
 }
 
 // =============================================================================
+// Density Breakdown Formatting
+// =============================================================================
+
+export function formatDensityBreakdown(breakdown: {
+  toolCalls: number;
+  fileWrites: number;
+  gitOps: number;
+  decisionTags: number;
+  errors: number;
+  totalTokens: number;
+  score: number;
+}): string {
+  const bar = (value: number, max: number, width: number = 20): string => {
+    const filled = Math.round(Math.min(value / max, 1) * width);
+    return "[" + "=".repeat(filled) + " ".repeat(width - filled) + "]";
+  };
+
+  return [
+    `Density Score: ${(breakdown.score * 100).toFixed(1)}%`,
+    "",
+    `  Tool calls    ${bar(breakdown.toolCalls, 50)}  ${breakdown.toolCalls} (cap 50)`,
+    `  File writes   ${bar(breakdown.fileWrites, 20)}  ${breakdown.fileWrites} (cap 20)`,
+    `  Git ops       ${bar(breakdown.gitOps, 10)}  ${breakdown.gitOps} (cap 10)`,
+    `  Decisions     ${bar(breakdown.decisionTags, 3)}  ${breakdown.decisionTags} (cap 3)`,
+    `  Errors        ${bar(breakdown.errors, 10)}  ${breakdown.errors} (cap 10)`,
+    `  Tokens        ${bar(breakdown.totalTokens, 200_000)}  ${breakdown.totalTokens.toLocaleString()} (cap 200k)`,
+  ].join("\n");
+}
+
+// =============================================================================
+// Digest Formatting
+// =============================================================================
+
+export function formatDigest(report: {
+  period: { from: string; to: string; days: number };
+  totalSessions: number;
+  totalMessages: number;
+  totalTokens: number;
+  estimatedCost: number;
+  byProject: Array<{
+    projectId: string | null;
+    sessionCount: number;
+    totalTokens: number;
+    estimatedCost: number;
+    filesChanged: number;
+    gitOps: number;
+    errorCount: number;
+    topTools: Array<{ toolName: string; count: number }>;
+    sessions: Array<{
+      id: string;
+      title: string;
+      updatedAt: string;
+      toolCount: number;
+      fileCount: number;
+      gitCount: number;
+      errorCount: number;
+      densityScore: number;
+    }>;
+  }>;
+  topErrors: Array<{ message: string; count: number }>;
+  synthesis?: string;
+}): string {
+  const lines: string[] = [];
+
+  const fromDate = report.period.from.slice(0, 10);
+  const toDate = report.period.to.slice(0, 10);
+  lines.push(`Digest: ${fromDate} → ${toDate} (${report.period.days}d)`);
+  lines.push("");
+  lines.push(`Sessions:  ${report.totalSessions}`);
+  lines.push(`Messages:  ${report.totalMessages.toLocaleString()}`);
+  lines.push(`Tokens:    ${report.totalTokens.toLocaleString()}`);
+  lines.push(`Est. Cost: $${report.estimatedCost.toFixed(4)}`);
+
+  if (report.synthesis) {
+    lines.push("");
+    lines.push("Summary:");
+    for (const line of report.synthesis.split("\n")) {
+      lines.push(`  ${line}`);
+    }
+  }
+
+  for (const proj of report.byProject) {
+    lines.push("");
+    lines.push(`Project: ${proj.projectId ?? "(no project)"}`);
+    lines.push(
+      `  ${proj.sessionCount} session${proj.sessionCount === 1 ? "" : "s"}  |  ` +
+      `${proj.filesChanged} file${proj.filesChanged === 1 ? "" : "s"}  |  ` +
+      `${proj.gitOps} git op${proj.gitOps === 1 ? "" : "s"}  |  ` +
+      `${proj.errorCount} error${proj.errorCount === 1 ? "" : "s"}  |  ` +
+      `$${proj.estimatedCost.toFixed(4)}`
+    );
+
+    if (proj.topTools.length > 0) {
+      const toolStr = proj.topTools.map((t) => `${t.toolName}(${t.count})`).join(" ");
+      lines.push(`  Tools: ${toolStr}`);
+    }
+
+    for (const s of proj.sessions) {
+      const density = `${(s.densityScore * 100).toFixed(0)}%`;
+      const date = s.updatedAt.slice(0, 10);
+      lines.push(
+        `  ${s.id.slice(0, 8)}  ${pad(s.title, 40)}  density:${density}  ${date}`
+      );
+    }
+  }
+
+  if (report.topErrors.length > 0) {
+    lines.push("");
+    lines.push("Top Errors:");
+    for (const e of report.topErrors) {
+      const snippet = e.message?.slice(0, 80) || "(empty)";
+      lines.push(`  x${e.count}  ${snippet}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
 // Tag Usage Formatting
 // =============================================================================
 

@@ -9,6 +9,8 @@ import {
   upsertProject,
   upsertSessionCosts,
   upsertSessionMeta,
+  computeDensityScore,
+  updateDensityScore,
 } from "../db";
 import type { MessageBlock } from "./types";
 
@@ -152,6 +154,10 @@ export function storeSession(
     .prepare(`SELECT 1 as yes FROM smriti_agents WHERE id = ?`)
     .get(agentId) as { yes: number } | null;
   upsertSessionMeta(db, sessionId, agentExists ? agentId : undefined, projectId || undefined);
+
+  // Compute and persist density score after all sidecar rows are written
+  const { score } = computeDensityScore(db as any, sessionId);
+  updateDensityScore(db as any, sessionId, score);
 }
 
 export function storeCosts(

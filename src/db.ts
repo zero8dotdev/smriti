@@ -172,6 +172,13 @@ export function initializeSmritiTables(db: Database): void {
     // Column already exists
   }
 
+  // density_score on smriti_session_meta
+  try {
+    db.exec(`ALTER TABLE smriti_session_meta ADD COLUMN density_score REAL DEFAULT 0`);
+  } catch {
+    // Column already exists
+  }
+
   // Migrate smriti_shares if they don't exist (migration)
   try {
     db.exec(`ALTER TABLE smriti_shares ADD COLUMN unit_id TEXT`);
@@ -1170,4 +1177,76 @@ export function insertVoiceNote(
     `INSERT INTO smriti_voice_notes (message_id, session_id, title, transcript, created_at)
      VALUES (?, ?, ?, ?, ?)`
   ).run(messageId, sessionId, title, transcript, createdAt);
+}
+
+// =============================================================================
+// Knowledge Density Scoring (#62)
+// =============================================================================
+
+export type DensityBreakdown = {
+  toolCalls: number;
+  fileWrites: number;
+  gitOps: number;
+  decisionTags: number;
+  errors: number;
+  totalTokens: number;
+  score: number;
+};
+
+/**
+ * Compute a composite density score (0–1) for a session based on sidecar signals.
+ *
+ * Weights: tool calls 25%, file writes 25%, git ops 20%, decision tags 15%,
+ * errors 10%, token volume 5%. Each signal is linearly capped at a "full" ceiling.
+ */
+export function computeDensityScore(db: Database, sessionId: string): DensityBreakdown {
+  const toolCalls = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_tool_usage WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const fileWrites = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_file_operations
+     WHERE session_id = ? AND operation IN ('write', 'edit', 'create')`
+  ).get(sessionId) as { n: number }).n;
+
+  const gitOps = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_git_operations WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const decisionTags = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_session_tags
+     WHERE session_id = ? AND (category_id = 'decision' OR category_id LIKE 'decision/%')`
+  ).get(sessionId) as { n: number }).n;
+
+  const errors = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_errors WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const totalTokens = (db.prepare(
+    `SELECT COALESCE(SUM(total_input_tokens + total_output_tokens + total_cache_tokens), 0) as n
+     FROM smriti_session_costs WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const score =
+    Math.min(toolCalls / 50, 1) * 0.25 +
+    Math.min(fileWrites / 20, 1) * 0.25 +
+    Math.min(gitOps / 10, 1) * 0.20 +
+    Math.min(decisionTags / 3, 1) * 0.15 +
+    Math.min(errors / 10, 1) * 0.10 +
+    Math.min(totalTokens / 200_000, 1) * 0.05;
+
+  return { toolCalls, fileWrites, gitOps, decisionTags, errors, totalTokens, score };
+}
+
+export function updateDensityScore(db: Database, sessionId: string, score: number): void {
+  db.prepare(
+    `UPDATE smriti_session_meta SET density_score = ? WHERE session_id = ?`
+  ).run(score, sessionId);
+}
+
+export function getDensityScore(db: Database, sessionId: string): number {
+  const row = db.prepare(
+    `SELECT density_score FROM smriti_session_meta WHERE session_id = ?`
+  ).get(sessionId) as { density_score: number } | null;
+  return row?.density_score ?? 0;
 }
