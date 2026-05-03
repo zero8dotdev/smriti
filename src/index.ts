@@ -56,6 +56,7 @@ import {
   json,
 } from "./format";
 import { generateDigest } from "./digest";
+import { ollamaAsk } from "./ollama";
 
 // =============================================================================
 // Arg Parsing Helpers
@@ -117,6 +118,7 @@ Commands:
   insights [subcommand]        Cost & usage analysis dashboard
   embed                        Embed new messages for vector search
   enrich [--density] [--queries] Compute/update density scores or query labels
+  ask <question>               Answer a question from work history (RAG)
   digest [options]             Show work digest for a time window
   upgrade                      Update smriti to the latest version
   help                         Show this help
@@ -336,6 +338,75 @@ async function main() {
             console.log(result.synthesis);
           }
         }
+        break;
+      }
+
+      // =====================================================================
+      // ASK (RAG question-answering)
+      // =====================================================================
+      case "ask": {
+        const question = args[1];
+        if (!question) {
+          console.error('Usage: smriti ask "<question>" [options]');
+          process.exit(1);
+        }
+
+        const noSynthesize = hasFlag(args, "--no-synthesize");
+        const askLimit = Number(getArg(args, "--limit")) || 5;
+        const askModel = getArg(args, "--model");
+        const askProject = getArg(args, "--project");
+        const askAgent = getArg(args, "--agent");
+
+        // Multi-angle recall (expandQuery + rerank already default-on)
+        const askResult = await recall(db, question, {
+          limit: askLimit,
+          synthesize: false,
+          project: askProject || undefined,
+          agent: askAgent || undefined,
+          fast: false,
+        });
+
+        if (hasFlag(args, "--json")) {
+          const sources = askResult.results.map((r, i) => ({
+            n: i + 1,
+            session_id: r.session_id,
+            session_title: r.session_title,
+            score: r.score,
+            content: r.content,
+          }));
+          console.log(json({ question, sources }));
+          break;
+        }
+
+        if (noSynthesize || askResult.results.length === 0) {
+          console.log(formatSearchResults(askResult.results));
+          break;
+        }
+
+        // Format sources for Ollama
+        const sourcesText = askResult.results
+          .map((r, i) => `[${i + 1}] ${r.session_title || r.session_id}\n${r.content}`)
+          .join("\n\n---\n\n");
+
+        let answer: string | undefined;
+        try {
+          answer = await ollamaAsk(question, sourcesText, { model: askModel || undefined });
+        } catch {
+          answer = undefined;
+        }
+
+        if (answer) {
+          console.log(answer);
+          console.log("\nSources:");
+          askResult.results.forEach((r, i) => {
+            const date = r.session_id ? new Date(r.session_id).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+            console.log(`  [${i + 1}] ${r.session_id} — ${r.session_title || "(untitled)"}${date ? ` (${date})` : ""}`);
+          });
+        } else {
+          console.log("(Ollama unavailable — returning sources)\n");
+          console.log(formatSearchResults(askResult.results));
+        }
+
         break;
       }
 

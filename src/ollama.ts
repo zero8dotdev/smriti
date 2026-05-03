@@ -140,6 +140,41 @@ export async function ollamaRecall(
 }
 
 /**
+ * Answer a natural language question grounded in retrieved session memories.
+ * Returns the answer only — caller appends citations.
+ */
+export async function ollamaAsk(
+  question: string,
+  sources: string,
+  options: OllamaChatOptions = {}
+): Promise<string> {
+  const messages: OllamaChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "You are an expert assistant with access to an engineer's work history. " +
+        "Answer the question directly and precisely using only the provided sources. " +
+        "If sources are insufficient, say so explicitly. " +
+        "Cite sources by [N] where N is the source number. " +
+        "Be concise — answer in 2-4 sentences unless depth is needed. " +
+        "Output only the answer, no preamble.",
+    },
+    {
+      role: "user",
+      content: `Question: ${question}\n\nSources:\n${sources}`,
+    },
+  ];
+
+  const resp = await ollamaChat(messages, {
+    ...options,
+    temperature: options.temperature ?? 0.2,
+    maxTokens: options.maxTokens ?? 512,
+  });
+
+  return resp.message.content.trim();
+}
+
+/**
  * Check if Ollama is running and accessible.
  * Pings the /api/tags endpoint.
  */
