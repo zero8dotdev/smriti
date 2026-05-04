@@ -8,6 +8,7 @@ import type { Database } from "bun:sqlite";
 import { DEFAULT_RECALL_LIMIT, OLLAMA_HOST, OLLAMA_MODEL } from "../config";
 import { recallMemories, ollamaRecall } from "../qmd";
 import { searchFiltered, type SearchFilters, type SearchResult } from "./index";
+import { getQmdStore } from "../store";
 
 // =============================================================================
 // Types
@@ -50,7 +51,17 @@ export async function recall(
     || options.includeAttachments === false || options.includeVoiceNotes === false;
 
   if (!hasFilters) {
-    // Use QMD's native recall for unfiltered queries
+    // When smriti-sessions QMD collection has documents, use store.search() for full hybrid pipeline
+    const storeResults = await tryQmdSessionSearch(query, options.limit || DEFAULT_RECALL_LIMIT, rerankIntent, options.fast);
+    if (storeResults) {
+      let synthesis: string | undefined;
+      if (options.synthesize && storeResults.length > 0) {
+        synthesis = await synthesizeResults(query, storeResults, options);
+      }
+      return { results: storeResults, synthesis };
+    }
+
+    // Fallback: QMD's memory recall (recallMemories)
     const qmdResult = await recallMemories(db, query, {
       limit: options.limit || DEFAULT_RECALL_LIMIT,
       synthesize: options.synthesize,
@@ -92,6 +103,49 @@ export async function recall(
   }
 
   return { results: deduped, synthesis };
+}
+
+/**
+ * Try QMD store.search() on the smriti-sessions collection.
+ * Returns null if the collection doesn't exist or has no documents.
+ * Maps HybridQueryResult[] to SearchResult[] so callers are unchanged.
+ */
+async function tryQmdSessionSearch(
+  query: string,
+  limit: number,
+  intent?: string,
+  fast?: boolean
+): Promise<SearchResult[] | null> {
+  try {
+    const store = getQmdStore();
+    const collections = await store.listCollections();
+    const sessionsCol = collections.find(c => c.name === "smriti-sessions");
+    if (!sessionsCol || sessionsCol.doc_count === 0) return null;
+
+    const results = await store.search({
+      query,
+      collections: ["smriti-sessions"],
+      limit,
+      intent,
+      rerank: !fast,
+    });
+
+    return results.map(r => {
+      // Extract session_id from the file path: smriti-sessions/<session_id>.md
+      const filename = r.file.split("/").pop()?.replace(/\.md$/, "") ?? r.file;
+      return {
+        session_id: filename,
+        session_title: r.title,
+        message_id: 0,
+        role: "session",
+        content: r.bestChunk || r.body.slice(0, 500),
+        score: r.score,
+        source: "qmd",
+      } as SearchResult;
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

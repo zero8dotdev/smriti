@@ -75,3 +75,7 @@ export const DEFAULT_CONTEXT_DAYS = 7;
 
 /** Git author name for team sharing */
 export const AUTHOR = Bun.env.SMRITI_AUTHOR || Bun.env.USER || "unknown";
+
+/** Directory for session markdown documents (QMD smriti-sessions collection) */
+export const SMRITI_SESSIONS_DIR =
+  Bun.env.SMRITI_SESSIONS_DIR || join(HOME, ".cache", "smriti", "sessions");

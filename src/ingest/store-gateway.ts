@@ -13,6 +13,7 @@ import {
   updateDensityScore,
   insertSessionQueries,
   getSessionQueryCount,
+  writeSessionDocument,
 } from "../db";
 import { getQmdStore } from "../store";
 import type { MessageBlock } from "./types";
@@ -161,6 +162,14 @@ export function storeSession(
   // Compute and persist density score after all sidecar rows are written
   const { score } = computeDensityScore(db as any, sessionId);
   updateDensityScore(db as any, sessionId, score);
+
+  // Write session markdown to QMD smriti-sessions collection (non-blocking, best-effort)
+  writeSessionDocument(db as any, sessionId, agentExists ? agentId : null, projectId).then(async () => {
+    try {
+      const store = getQmdStore();
+      await store.update({ collections: ["smriti-sessions"] });
+    } catch { /* collection not registered yet — ok */ }
+  }).catch(() => { /* sessions dir not configured — skip silently */ });
 
   // Auto-enrich with query aliases (non-blocking, best-effort)
   if (getSessionQueryCount(db as any, sessionId) === 0) {

@@ -8,9 +8,9 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync } from "fs";
 import { dirname } from "path";
-import { QMD_DB_PATH } from "./config";
+import { QMD_DB_PATH, SMRITI_SESSIONS_DIR } from "./config";
 import { initializeMemoryTables } from "./qmd";
 import { createStore } from "../qmd/src/index";
 import { setQmdStore, closeQmdStore } from "./store";
@@ -638,6 +638,17 @@ export async function initSmriti(dbPath?: string): Promise<Database> {
   initializeSmritiTables(db);
   seedDefaults(db);
   migrateFTSToV2(db);
+
+  // Register the smriti-sessions QMD collection when the sessions dir exists
+  if (resolvedPath !== ":memory:" && existsSync(SMRITI_SESSIONS_DIR)) {
+    try {
+      await store.addCollection("smriti-sessions", {
+        path: SMRITI_SESSIONS_DIR,
+        pattern: "**/*.md",
+      });
+    } catch { /* collection may already exist */ }
+  }
+
   return db;
 }
 
@@ -1247,6 +1258,64 @@ export function getSessionQueryCount(db: Database, sessionId: string): number {
   return (db.prepare(
     `SELECT COUNT(*) as n FROM smriti_session_queries WHERE session_id = ?`
   ).get(sessionId) as { n: number }).n;
+}
+
+// =============================================================================
+// QMD Document Index (#59 Phase 4)
+// =============================================================================
+
+export function getSessionDocPath(sessionId: string): string {
+  const { join } = require("path");
+  const { SMRITI_SESSIONS_DIR: dir } = require("./config");
+  return join(dir, `${sessionId}.md`);
+}
+
+export function buildSessionDocument(
+  sessionId: string,
+  title: string,
+  agentId: string | null,
+  projectId: string | null,
+  createdAt: string,
+  messages: { role: string; content: string }[]
+): string {
+  const lines: string[] = [
+    `# ${title || sessionId}`,
+    "",
+    `agent: ${agentId || "unknown"}`,
+    `project: ${projectId || "unknown"}`,
+    `date: ${createdAt.split("T")[0]}`,
+    `session_id: ${sessionId}`,
+    "",
+  ];
+  for (const msg of messages) {
+    lines.push(`**${msg.role}**: ${msg.content}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+export async function writeSessionDocument(
+  db: Database,
+  sessionId: string,
+  agentId: string | null,
+  projectId: string | null
+): Promise<void> {
+  const { SMRITI_SESSIONS_DIR: dir } = await import("./config");
+  const { mkdirSync: mkDir, writeFileSync } = await import("fs");
+  mkDir(dir, { recursive: true });
+
+  const session = db.prepare(
+    `SELECT title, created_at FROM memory_sessions WHERE id = ?`
+  ).get(sessionId) as { title: string; created_at: string } | null;
+  if (!session) return;
+
+  const messages = db.prepare(
+    `SELECT role, content FROM memory_messages WHERE session_id = ? ORDER BY created_at ASC`
+  ).all(sessionId) as { role: string; content: string }[];
+
+  const content = buildSessionDocument(sessionId, session.title, agentId, projectId, session.created_at, messages);
+  const { join } = await import("path");
+  writeFileSync(join(dir, `${sessionId}.md`), content, "utf-8");
 }
 
 export function getUnenrichedSessionIds(db: Database, projectId?: string): string[] {
