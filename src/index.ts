@@ -57,6 +57,7 @@ import {
 } from "./format";
 import { generateDigest } from "./digest";
 import { ollamaAsk, ollamaDrift, ollamaCheckConflicts } from "./ollama";
+import { clusterSessions, getClusterSessionIds } from "./cluster";
 
 // =============================================================================
 // Arg Parsing Helpers
@@ -117,9 +118,10 @@ Commands:
   projects [id]                List projects or inspect a project
   insights [subcommand]        Cost & usage analysis dashboard
   embed                        Embed new messages for vector search
-  enrich [--density] [--queries] Compute/update density scores or query labels
+  enrich [--density] [--queries] [--clusters] Compute/update density scores, query labels, or clusters
   ask <question>               Answer a question from work history (RAG)
   drift <topic>                Show how thinking on a topic evolved over time
+  clusters [options]           Discover topic clusters from session embeddings
   digest [options]             Show work digest for a time window
   upgrade                      Update smriti to the latest version
   help                         Show this help
@@ -156,6 +158,7 @@ Recall options:
   --fast                       Skip query expansion and reranking
   --wide                       Search all projects (rerank with current project as intent)
   --check-conflicts            Detect contradictions among recall results (opt-in, uses Ollama)
+  --cluster <name>             Filter recall to sessions in a named cluster
 
 Context options:
   --project <id>               Project filter (auto-detect from cwd)
@@ -319,6 +322,14 @@ async function main() {
 
         const recallProject = getArg(args, "--project");
         const wideMode = hasFlag(args, "--wide");
+        const clusterFilter = getArg(args, "--cluster");
+        const clusterSessionIds = clusterFilter ? getClusterSessionIds(db, clusterFilter) : null;
+
+        if (clusterFilter && clusterSessionIds !== null && clusterSessionIds.length === 0) {
+          console.error(`No sessions found for cluster: ${clusterFilter}`);
+          console.error("Run 'smriti clusters' to see available clusters.");
+          process.exit(1);
+        }
 
         const result = await recall(db, query, {
           category: getArg(args, "--category"),
@@ -336,8 +347,13 @@ async function main() {
           wide: wideMode,
         });
 
+        // Apply --cluster filter: keep only sessions belonging to the cluster
+        if (clusterSessionIds && clusterSessionIds.length > 0) {
+          const clusterSet = new Set(clusterSessionIds);
+          result.results = result.results.filter(r => clusterSet.has(r.session_id));
+        }
+
         const checkConflicts = hasFlag(args, "--check-conflicts");
-        const conflictThreshold = parseFloat(process.env.SMRITI_CONFLICT_THRESHOLD || "0.7");
 
         // In --wide mode, look up project info for cross-project badge
         if (wideMode && recallProject && result.results.length > 0) {
@@ -1034,12 +1050,13 @@ async function main() {
       case "enrich": {
         const density = hasFlag(args, "--density");
         const queries = hasFlag(args, "--queries");
+        const clusters = hasFlag(args, "--clusters");
         const sessionFilter = getArg(args, "--session");
         const projectFilter = getArg(args, "--project");
         const dryRun = hasFlag(args, "--dry-run");
 
-        if (!density && !queries) {
-          console.error("Usage: smriti enrich --density | --queries [--session <id>] [--project <id>] [--dry-run]");
+        if (!density && !queries && !clusters) {
+          console.error("Usage: smriti enrich --density | --queries | --clusters [--session <id>] [--project <id>] [--dry-run]");
           process.exit(1);
         }
 
@@ -1110,6 +1127,57 @@ async function main() {
           }
         }
 
+        if (clusters) {
+          const k = Number(getArg(args, "--k")) || undefined;
+          const model = getArg(args, "--model");
+          console.log("Clustering sessions...");
+          const clusterResult = await clusterSessions(db as any, {
+            projectId: projectFilter || undefined,
+            k,
+            model,
+          });
+          if (clusterResult.clusters.length === 0) {
+            console.log("Not enough sessions with embeddings to cluster. Run 'smriti embed' first.");
+          } else {
+            for (const c of clusterResult.clusters) {
+              const lastActive = c.lastActive ? new Date(c.lastActive).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+              console.log(`  ${c.name.padEnd(40)} ${c.sessionIds.length} session${c.sessionIds.length === 1 ? "" : "s"}${lastActive ? `  (${lastActive})` : ""}`);
+            }
+            console.log(`\n${clusterResult.clusters.length} clusters across ${clusterResult.totalSessions} sessions.`);
+          }
+        }
+
+        break;
+      }
+
+      // =====================================================================
+      // CLUSTERS
+      // =====================================================================
+      case "clusters": {
+        const k = Number(getArg(args, "--k")) || undefined;
+        const model = getArg(args, "--model");
+        const projectId = getArg(args, "--project");
+
+        console.log("Clustering sessions...");
+        const clusterResult = await clusterSessions(db as any, { projectId, k, model });
+
+        if (clusterResult.clusters.length === 0) {
+          console.log("Not enough sessions with embeddings to cluster.");
+          console.log("Run 'smriti embed' first to build embeddings, then re-run.");
+          break;
+        }
+
+        if (hasFlag(args, "--json")) {
+          console.log(json(clusterResult));
+          break;
+        }
+
+        console.log(`\n${clusterResult.clusters.length} clusters across ${clusterResult.totalSessions} sessions\n`);
+        for (const c of clusterResult.clusters) {
+          const lastActive = c.lastActive ? new Date(c.lastActive).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+          console.log(`  ${c.name}`);
+          console.log(`    ${c.sessionIds.length} session${c.sessionIds.length === 1 ? "" : "s"}${lastActive ? `  · last active ${lastActive}` : ""}`);
+        }
         break;
       }
 
