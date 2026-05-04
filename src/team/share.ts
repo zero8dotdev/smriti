@@ -10,6 +10,7 @@ import { SMRITI_DIR, AUTHOR } from "../config";
 import { hashContent } from "../qmd";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { readConfig, writeConfig, exportCustomCategories } from "./config";
 import {
   formatSessionAsFallback,
   isSessionWorthSharing,
@@ -162,7 +163,8 @@ function getSessionMessages(
 /** Write manifest and config files, generate CLAUDE.md */
 async function writeManifest(
   outputDir: string,
-  newEntries: Array<{ id: string; category: string; file: string; shared_at: string }>
+  newEntries: Array<{ id: string; category: string; file: string; shared_at: string }>,
+  db?: Database
 ): Promise<void> {
   const indexPath = join(outputDir, "index.json");
   let existingManifest: any[] = [];
@@ -176,22 +178,17 @@ async function writeManifest(
   const fullManifest = [...existingManifest, ...newEntries];
   await Bun.write(indexPath, JSON.stringify(fullManifest, null, 2));
 
-  // Write config if it doesn't exist
-  const configPath = join(outputDir, "config.json");
-  if (!existsSync(configPath)) {
-    await Bun.write(
-      configPath,
-      JSON.stringify(
-        {
-          version: 1,
-          allowedCategories: ["*"],
-          autoSync: false,
-        },
-        null,
-        2
-      )
-    );
-  }
+  // Write config — always update with latest custom categories
+  const existing = readConfig(outputDir);
+  const customCategories = db ? exportCustomCategories(db) : [];
+  const config = {
+    ...existing,
+    version: customCategories.length > 0 ? 2 : (existing.version ?? 1),
+    allowedCategories: existing.allowedCategories ?? ["*"],
+    autoSync: existing.autoSync ?? false,
+    ...(customCategories.length > 0 ? { categories: customCategories } : {}),
+  };
+  await writeConfig(outputDir, config);
 
   // Generate CLAUDE.md
   await generateClaudeMd(outputDir, fullManifest);
@@ -351,7 +348,7 @@ async function shareSegmentedKnowledge(
     }
   }
 
-  await writeManifest(outputDir, manifest);
+  await writeManifest(outputDir, manifest, db);
   return result;
 }
 
@@ -517,7 +514,7 @@ export async function shareKnowledge(
     }
   }
 
-  await writeManifest(outputDir, manifest);
+  await writeManifest(outputDir, manifest, db);
   return result;
 }
 

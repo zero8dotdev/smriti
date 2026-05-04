@@ -277,12 +277,16 @@ export function formatSyncResult(result: {
   imported: number;
   skipped: number;
   errors: string[];
+  categoriesImported?: number;
 }): string {
   const lines = [
     `Files processed: ${result.filesProcessed}`,
     `Imported: ${result.imported}`,
     `Skipped: ${result.skipped}`,
   ];
+  if (result.categoriesImported && result.categoriesImported > 0) {
+    lines.push(`Categories imported: ${result.categoriesImported}`);
+  }
 
   if (result.errors.length > 0) {
     lines.push(`Errors: ${result.errors.length}`);

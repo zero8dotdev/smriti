@@ -123,6 +123,8 @@ Commands:
   drift <topic>                Show how thinking on a topic evolved over time
   clusters [options]           Discover topic clusters from session embeddings
   digest [options]             Show work digest for a time window
+  config show                  Show current .smriti/config.json
+  config add-category <id>     Add a custom category to DB and team config
   upgrade                      Update smriti to the latest version
   help                         Show this help
 
@@ -1300,6 +1302,79 @@ async function main() {
           console.log(json(report));
         } else {
           console.log(formatDigest(report));
+        }
+        break;
+      }
+
+      // =====================================================================
+      // CONFIG (team config.json management)
+      // =====================================================================
+      case "config": {
+        const { readConfig, writeConfig, exportCustomCategories } = await import("./team/config");
+        const sub = args[1];
+        const smritiDir = (() => {
+          const project = getArg(args, "--project");
+          if (project) {
+            const p = db.prepare(`SELECT path FROM smriti_projects WHERE id = ?`).get(project) as { path: string } | null;
+            if (p?.path) return require("path").join(p.path, ".smriti");
+          }
+          return require("path").join(process.cwd(), ".smriti");
+        })();
+
+        if (!sub || sub === "show") {
+          const config = readConfig(smritiDir);
+          if (hasFlag(args, "--json")) {
+            console.log(json(config));
+          } else {
+            console.log(`Config: ${smritiDir}/config.json`);
+            console.log(`  version: ${config.version}`);
+            const cats = config.categories ?? [];
+            if (cats.length > 0) {
+              console.log(`  custom categories (${cats.length}):`);
+              for (const c of cats) {
+                console.log(`    ${c.id}${c.parent ? ` (parent: ${c.parent})` : ""}  — ${c.name}`);
+              }
+            } else {
+              console.log("  custom categories: none");
+            }
+          }
+        } else if (sub === "add-category") {
+          const id = args[2];
+          const name = getArg(args, "--name");
+          if (!id || !name) {
+            console.error("Usage: smriti config add-category <id> --name <name> [--parent <parent>] [--description <desc>] [--project <id>]");
+            process.exit(1);
+          }
+          const parent = getArg(args, "--parent");
+          const description = getArg(args, "--description");
+
+          // Add to local DB
+          const { addCategory } = await import("./db");
+          addCategory(db, id, name, parent, description);
+          console.log(`Added category: ${id} (${name})`);
+
+          // Write to config.json
+          const { mkdirSync } = await import("fs");
+          mkdirSync(smritiDir, { recursive: true });
+          const config = readConfig(smritiDir);
+          const categories = config.categories ?? [];
+          if (!categories.find(c => c.id === id)) {
+            categories.push({ id, name, ...(parent ? { parent } : {}), ...(description ? { description } : {}) });
+          }
+          await writeConfig(smritiDir, { ...config, version: 2, categories });
+          console.log(`Written to ${smritiDir}/config.json`);
+        } else if (sub === "sync-categories") {
+          // Export current DB custom categories into config.json
+          const { mkdirSync } = await import("fs");
+          mkdirSync(smritiDir, { recursive: true });
+          const config = readConfig(smritiDir);
+          const categories = exportCustomCategories(db);
+          await writeConfig(smritiDir, { ...config, version: categories.length > 0 ? 2 : config.version, categories });
+          console.log(`Synced ${categories.length} custom category${categories.length === 1 ? "" : "ies"} to ${smritiDir}/config.json`);
+        } else {
+          console.error(`Unknown config subcommand: ${sub}`);
+          console.error("Usage: smriti config show | add-category | sync-categories");
+          process.exit(1);
         }
         break;
       }
