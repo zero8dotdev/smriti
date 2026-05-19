@@ -88,6 +88,109 @@ function getPositional(args: string[], index: number): string | undefined {
 }
 
 // =============================================================================
+// Daemon subcommand dispatch
+// =============================================================================
+
+async function runDaemonCommand(args: string[]): Promise<void> {
+  const sub = args[1];
+
+  if (!sub) {
+    // Foreground daemon — never returns until SIGTERM / SIGINT.
+    const { runDaemon } = await import("./daemon");
+    const daemon = await runDaemon();
+    const watched = daemon.watchedAgents.length > 0
+      ? daemon.watchedAgents.join(", ")
+      : "(none — no agent log dirs found)";
+    console.error(`[smriti] daemon started, pid=${daemon.pid}, watching=${watched}`);
+    // Block forever; server.ts's signal handlers handle shutdown + exit.
+    await new Promise<never>(() => {});
+    return;
+  }
+
+  if (sub === "install") {
+    const { installDaemon } = await import("./daemon/install");
+    const result = await installDaemon({ force: hasFlag(args, "--force") });
+    console.log(`Service file: ${result.servicePath}`);
+    console.log(`  wrote: ${result.wrote}`);
+    console.log(`  already registered: ${result.alreadyRegistered}`);
+    return;
+  }
+
+  if (sub === "uninstall") {
+    const { uninstallDaemon } = await import("./daemon/install");
+    const result = await uninstallDaemon();
+    console.log(`Service file: ${result.servicePath}`);
+    console.log(`  removed: ${result.removedFile}`);
+    console.log(`  unregistered: ${result.unregistered}`);
+    return;
+  }
+
+  if (sub === "status") {
+    const { getDaemonStatus } = await import("./daemon/client");
+    const s = getDaemonStatus();
+    if (!s.running) {
+      console.log("daemon: not running");
+      console.log(`  PID file: ${s.pidFile}`);
+      return;
+    }
+    console.log("daemon: running");
+    console.log(`  PID:     ${s.pid}`);
+    if (s.startedAt) {
+      const uptimeSec = Math.floor((Date.now() - s.startedAt.getTime()) / 1000);
+      console.log(`  started: ${s.startedAt.toISOString()}`);
+      console.log(`  uptime:  ${formatUptime(uptimeSec)}`);
+    }
+    return;
+  }
+
+  if (sub === "stop") {
+    const { stopDaemon } = await import("./daemon/client");
+    const r = await stopDaemon();
+    if (r.state === "not-running") {
+      console.log("daemon: not running");
+    } else if (r.state === "stopped") {
+      console.log(`daemon: stopped (PID ${r.pid})`);
+    } else {
+      console.log(`daemon: did not exit in time (PID ${r.pid}). Send SIGKILL manually or retry.`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (sub === "logs") {
+    const { DAEMON_LOG_FILE } = await import("./config");
+    const file = Bun.file(DAEMON_LOG_FILE);
+    if (!(await file.exists())) {
+      console.error(`No log file at ${DAEMON_LOG_FILE}. Has the daemon ever run?`);
+      process.exit(1);
+    }
+    // tail -F follows the file across rotation, which is what LaunchAgents
+    // and systemd will do over time.
+    const proc = Bun.spawn(["tail", "-F", DAEMON_LOG_FILE], {
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    await proc.exited;
+    return;
+  }
+
+  console.error(`Unknown daemon subcommand: ${sub}`);
+  console.error("Usage: smriti daemon [install|uninstall|status|stop|logs]");
+  console.error("       smriti daemon       (run in foreground)");
+  process.exit(1);
+}
+
+function formatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m ${seconds % 60}s`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+// =============================================================================
 // Commands
 // =============================================================================
 
@@ -125,6 +228,7 @@ Commands:
   digest [options]             Show work digest for a time window
   config show                  Show current .smriti/config.json
   config add-category <id>     Add a custom category to DB and team config
+  daemon [subcommand]          Cross-agent capture daemon (see Daemon options)
   upgrade                      Update smriti to the latest version
   help                         Show this help
 
@@ -183,6 +287,14 @@ Insights options:
   smriti insights errors [--project <id>]  Error analysis
   smriti insights tools [--project <id>]   Tool reliability
 
+Daemon options:
+  smriti daemon                            Run daemon in foreground (debugging)
+  smriti daemon install [--force]          Install LaunchAgent (macOS) or systemd unit (Linux)
+  smriti daemon uninstall                  Reverse install — stop daemon, remove service file
+  smriti daemon status                     Show PID, uptime, watched agents
+  smriti daemon stop                       Send SIGTERM to the running daemon
+  smriti daemon logs                       Tail the daemon log file
+
 Examples:
   smriti ingest claude
   smriti ingest copilot
@@ -225,6 +337,13 @@ async function main() {
   if (command === "--version" || command === "-v") {
     const pkg = require("../package.json");
     console.log(`smriti ${pkg.version}`);
+    return;
+  }
+
+  // Daemon subcommands — handled before initSmriti() because the foreground
+  // daemon opens its own DB handle per flush (smoke-test finding 3).
+  if (command === "daemon") {
+    await runDaemonCommand(args);
     return;
   }
 
