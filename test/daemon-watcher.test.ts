@@ -29,7 +29,9 @@ const settle = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 
 // Tests --------------------------------------------------------------
 
-describe("watchRecursive", () => {
+// The daemon is deferred on Windows (see release notes); Bun's fs.watch on
+// win32 hard-crashes the test process, so skip the suite there entirely.
+describe.skipIf(process.platform === "win32")("watchRecursive", () => {
   test("throws if root does not exist", () => {
     expect(() =>
       watchRecursive(join(tmpRoot, "does-not-exist"), () => {}),
