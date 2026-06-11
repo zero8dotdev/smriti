@@ -32,7 +32,7 @@ export async function storeMessage(
   sessionId: string,
   role: string,
   content: string,
-  options?: { title?: string; metadata?: Record<string, unknown> }
+  options?: { title?: string; metadata?: Record<string, unknown>; timestamp?: string }
 ): Promise<StoreMessageResult> {
   try {
     const stored = await addMessage(db, sessionId, role, content, options);
@@ -162,6 +162,10 @@ export function storeSession(
   // Compute and persist density score after all sidecar rows are written
   const { score } = computeDensityScore(db as any, sessionId);
   updateDensityScore(db as any, sessionId, score);
+
+  // Bulk backfills: skip LLM enrichment (query expansion) and collection sync —
+  // run `smriti enrich` / `smriti embed` afterwards instead
+  if (process.env.SMRITI_INGEST_NO_ENRICH === "1") return;
 
   // Write session markdown to QMD smriti-sessions collection (non-blocking, best-effort)
   writeSessionDocument(db as any, sessionId, agentExists ? agentId : null, projectId).then(async () => {

@@ -269,9 +269,11 @@ export async function addMessage(
   sessionId: string,
   role: string,
   content: string,
-  options: { title?: string; metadata?: Record<string, unknown> } = {}
+  options: { title?: string; metadata?: Record<string, unknown>; timestamp?: string } = {}
 ): Promise<MemoryMessage> {
   const now = new Date().toISOString();
+  // Backfilled ingests pass the original message timestamp; live writes default to now
+  const created = options.timestamp || now;
   const hash = await hashContent(content);
 
   // Preserve "new" behavior, which generates an ID.
@@ -284,7 +286,7 @@ export async function addMessage(
   db.prepare(
     `INSERT OR IGNORE INTO memory_sessions (id, title, created_at, updated_at, active)
      VALUES (?, ?, ?, ?, 1)`
-  ).run(resolvedSessionId, options.title || "", now, now);
+  ).run(resolvedSessionId, options.title || "", created, created);
 
   // If title is provided later, fill it only when current title is empty.
   if (options.title) {
@@ -304,11 +306,11 @@ export async function addMessage(
       `INSERT INTO memory_messages (session_id, role, content, hash, created_at, metadata)
      VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(resolvedSessionId, role, content, hash, now, metadataStr);
+    .run(resolvedSessionId, role, content, hash, created, metadataStr);
 
   // Update session timestamp
   db.prepare(`UPDATE memory_sessions SET updated_at = ? WHERE id = ?`).run(
-    now,
+    created,
     resolvedSessionId
   );
 
@@ -318,7 +320,7 @@ export async function addMessage(
     role,
     content,
     hash,
-    created_at: now,
+    created_at: created,
     metadata: options.metadata || null,
   };
 }
