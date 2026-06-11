@@ -1,6 +1,6 @@
 {
   "name": "smriti",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "description": "Smriti - Unified memory layer across all AI agents",
   "type": "module",
   "bin": {
@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
-    "test": "bun test",
+    "test": "bun test --cwd ./test",
     "smriti": "bun src/index.ts",
     "bench:qmd": "bun run scripts/bench-qmd.ts --profile ci-small --out bench/results/ci-small.json --no-llm",
     "bench:qmd:repeat": "bun run scripts/bench-qmd-repeat.ts --profiles ci-small,small,medium --runs 3 --out bench/results/repeat-summary.json",
@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "node-llama-cpp": "^3.0.0",
+    "picomatch": "^4.0.0",
     "qmd": "file:./qmd"
   },
   "devDependencies": {

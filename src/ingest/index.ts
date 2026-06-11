@@ -32,6 +32,7 @@ export type IngestOptions = {
   existingSessionIds?: Set<string>;
   onProgress?: (msg: string) => void;
   logsDir?: string;
+  whole?: boolean;
 };
 
 function isStructuredMessage(msg: ParsedMessage | StructuredMessage): msg is StructuredMessage {
@@ -102,21 +103,24 @@ async function ingestParsedSessions(
       const correlationMap: ToolCorrelationMap = new Map();
       if (useSessionTxn) db.exec("BEGIN IMMEDIATE");
       try {
-        // Force mode: delete existing sidecar rows before re-processing
+        // Force mode: delete existing rows before re-processing — including
+        // memory_messages, otherwise re-ingest appends duplicates
         if (options.force && options.existingSessionIds.has(session.sessionId)) {
           deleteSidecarRows(db, session.sessionId);
+          db.prepare(`DELETE FROM memory_messages WHERE session_id = ?`).run(session.sessionId);
         }
         for (const msg of messagesToIngest) {
           const content = isStructuredMessage(msg) ? msg.plainText || "(structured content)" : msg.content;
           const messageOptions = isStructuredMessage(msg)
             ? {
                 title: parsed.session.title,
+                timestamp: msg.timestamp,
                 metadata: {
                   ...msg.metadata,
                   blocks: msg.blocks,
                 },
               }
-            : { title: parsed.session.title };
+            : { title: parsed.session.title, timestamp: msg.timestamp };
 
           const stored = await storeMessage(db, session.sessionId, msg.role, content, messageOptions);
           if (!stored.success) {
@@ -220,6 +224,7 @@ export async function ingest(
     sessionId?: string;
     projectId?: string;
     force?: boolean;
+    whole?: boolean;
   } = {}
 ): Promise<IngestResult> {
   const existingSessionIds = getExistingSessionIds(db);
@@ -265,30 +270,130 @@ export async function ingest(
       });
     }
     case "cursor": {
-      if (!options.projectPath) {
-        return {
-          agent: "cursor",
-          sessionsFound: 0,
-          sessionsIngested: 0,
-          messagesIngested: 0,
-          skipped: 0,
-          errors: ["projectPath required for Cursor ingestion"],
-        };
-      }
-      const { discoverCursorSessions } = await import("./cursor");
+      const {
+        discoverCursorSessions,
+        discoverCursorSqliteSessions,
+        buildComposerWorkspaceMap,
+        resolveCursorUserRoots,
+        parseCursorJson,
+      } = await import("./cursor");
       const { parseCursor } = await import("./parsers");
-      const discovered = await discoverCursorSessions(options.projectPath);
-      const sessions = discovered.map((s) => ({
-        sessionId: s.sessionId,
-        filePath: s.filePath,
-        projectDir: s.projectPath,
-      }));
-      return ingestParsedSessions(db, "cursor", sessions, parseCursor, {
-        existingSessionIds,
-        onProgress: options.onProgress,
-        explicitProjectId: options.projectId,
-        force: options.force,
-      });
+
+      // --- SQLite path: scan Cursor app globalStorage for all composers ---
+      const cursorUserRoots = resolveCursorUserRoots();
+      const sqliteSessions: Array<{
+        sessionId: string;
+        filePath: string; // unused sentinel for the parser
+        projectDir?: string;
+        _preResolved?: { messages: ParsedMessage[]; title: string; createdAt: string };
+      }> = [];
+
+      for (const userRoot of cursorUserRoots) {
+        const globalDbPath = `${userRoot}/globalStorage/state.vscdb`;
+        const composerMap = buildComposerWorkspaceMap(userRoot);
+        const discovered = discoverCursorSqliteSessions(globalDbPath, composerMap, {
+          projectPath: options.projectPath,
+        });
+        for (const { meta, messages } of discovered) {
+          sqliteSessions.push({
+            sessionId: meta.sessionId,
+            filePath: globalDbPath,
+            projectDir: meta.projectPath ?? undefined,
+            _preResolved: { messages, title: meta.title, createdAt: meta.createdAt },
+          });
+        }
+      }
+
+      // --- Legacy path: .cursor/**/*.json (only if projectPath given) ---
+      const legacySessions: Array<{
+        sessionId: string;
+        filePath: string;
+        projectDir?: string;
+      }> = [];
+      if (options.projectPath) {
+        const discovered = await discoverCursorSessions(options.projectPath);
+        // Avoid duplicating anything already covered by SQLite
+        const sqliteIds = new Set(sqliteSessions.map((s) => s.sessionId));
+        for (const s of discovered) {
+          if (!sqliteIds.has(s.sessionId)) {
+            legacySessions.push({
+              sessionId: s.sessionId,
+              filePath: s.filePath,
+              projectDir: s.projectPath,
+            });
+          }
+        }
+      }
+
+      // Ingest SQLite-discovered sessions with an identity parser (messages pre-resolved)
+      let sqliteResult: IngestResult = {
+        agent: "cursor",
+        sessionsFound: 0,
+        sessionsIngested: 0,
+        messagesIngested: 0,
+        skipped: 0,
+        errors: [],
+      };
+      if (sqliteSessions.length > 0) {
+        sqliteResult = await ingestParsedSessions(
+          db,
+          "cursor",
+          sqliteSessions,
+          async (_filePath: string, sessionId: string) => {
+            // Find pre-resolved data for this sessionId
+            const entry = sqliteSessions.find((s) => s.sessionId === sessionId);
+            const pre = entry?._preResolved;
+            return {
+              session: {
+                id: sessionId,
+                title: pre?.title ?? "Cursor Chat",
+                created_at: pre?.createdAt ?? new Date().toISOString(),
+              },
+              messages: pre?.messages ?? [],
+            };
+          },
+          {
+            existingSessionIds,
+            onProgress: options.onProgress,
+            explicitProjectId: options.projectId,
+            force: options.force,
+          }
+        );
+      }
+
+      // Ingest legacy JSON sessions
+      let legacyResult: IngestResult = {
+        agent: "cursor",
+        sessionsFound: 0,
+        sessionsIngested: 0,
+        messagesIngested: 0,
+        skipped: 0,
+        errors: [],
+      };
+      if (legacySessions.length > 0) {
+        legacyResult = await ingestParsedSessions(
+          db,
+          "cursor",
+          legacySessions,
+          parseCursor,
+          {
+            existingSessionIds,
+            onProgress: options.onProgress,
+            explicitProjectId: options.projectId,
+            force: options.force,
+          }
+        );
+      }
+
+      // Merge results
+      return {
+        agent: "cursor",
+        sessionsFound: sqliteResult.sessionsFound + legacyResult.sessionsFound,
+        sessionsIngested: sqliteResult.sessionsIngested + legacyResult.sessionsIngested,
+        messagesIngested: sqliteResult.messagesIngested + legacyResult.messagesIngested,
+        skipped: sqliteResult.skipped + legacyResult.skipped,
+        errors: [...sqliteResult.errors, ...legacyResult.errors],
+      };
     }
     case "cline": {
       const { discoverClineSessions } = await import("./cline");
@@ -369,7 +474,14 @@ export async function ingest(
       }
       const { parseGeneric } = await import("./parsers");
       const sessionId = options.sessionId || `generic-${crypto.randomUUID().slice(0, 8)}`;
-      const parsed = await parseGeneric(options.filePath, sessionId, options.format || "chat");
+      // Determine format: if --whole is specified, use "document" mode
+      let format: "chat" | "jsonl" | "document" = "chat";
+      if (options.whole) {
+        format = "document";
+      } else if (options.format) {
+        format = options.format as "chat" | "jsonl";
+      }
+      const parsed = await parseGeneric(options.filePath, sessionId, format);
       if (options.title) {
         parsed.session.title = options.title;
       }

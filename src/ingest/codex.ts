@@ -17,7 +17,15 @@ type CodexEntry = {
   content?: string | Array<{ type: string; text?: string }>;
   timestamp?: string;
   session_id?: string;
+  // Rollout format (codex_cli_rs >= ~0.40): messages wrapped in payload
+  payload?: {
+    type?: string;
+    role?: string;
+    content?: string | Array<{ type: string; text?: string }>;
+  };
 };
+
+const TEXT_BLOCK_TYPES = new Set(["text", "input_text", "output_text"]);
 
 function extractContent(
   content: string | Array<{ type: string; text?: string }> | undefined
@@ -26,11 +34,21 @@ function extractContent(
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
-      .filter((b) => b.type === "text" && b.text)
+      .filter((b) => TEXT_BLOCK_TYPES.has(b.type) && b.text)
       .map((b) => b.text!)
       .join("\n");
   }
   return "";
+}
+
+/** Injected context blocks Codex records as user messages — not real conversation */
+function isInjectedContext(text: string): boolean {
+  return (
+    text.startsWith("# AGENTS.md instructions") ||
+    text.startsWith("<environment_context>") ||
+    text.startsWith("<user_instructions>") ||
+    text.startsWith("<permissions instructions>")
+  );
 }
 
 /**
@@ -48,11 +66,21 @@ export function parseCodexJsonl(content: string): ParsedMessage[] {
       continue;
     }
 
-    const role = entry.role || entry.type;
+    // Rollout format: unwrap response_item message payloads
+    let role: string | undefined;
+    let content: CodexEntry["content"];
+    if (entry.type === "response_item" && entry.payload?.type === "message") {
+      role = entry.payload.role;
+      content = entry.payload.content;
+    } else {
+      role = entry.role || entry.type;
+      content = entry.content;
+    }
     if (!role || (role !== "user" && role !== "assistant")) continue;
 
-    const text = extractContent(entry.content);
+    const text = extractContent(content);
     if (!text.trim()) continue;
+    if (role === "user" && isInjectedContext(text)) continue;
 
     messages.push({
       role,

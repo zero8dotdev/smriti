@@ -3,14 +3,17 @@
  *
  * Uses the shared QMD SQLite database. All Smriti tables are prefixed with
  * `smriti_` to avoid collisions. Does NOT alter existing QMD tables.
+ *
+ * DB lifecycle: initSmriti() → createStore() (SDK) → setQmdStore() → initializeSmritiTables()
  */
 
 import { Database } from "bun:sqlite";
-import * as sqliteVec from "sqlite-vec";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync } from "fs";
 import { dirname } from "path";
-import { QMD_DB_PATH } from "./config";
+import { QMD_DB_PATH, SMRITI_SESSIONS_DIR } from "./config";
 import { initializeMemoryTables } from "./qmd";
+import { createStore } from "../qmd/src/index";
+import { setQmdStore, closeQmdStore } from "./store";
 
 // =============================================================================
 // Connection
@@ -18,93 +21,16 @@ import { initializeMemoryTables } from "./qmd";
 
 let _db: Database | null = null;
 
-/** Initialize QMD store tables (content, documents, vectors, etc) */
-function initializeQmdStore(db: Database): void {
-  // Load sqlite-vec extension
-  sqliteVec.load(db);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-
-  // Create content-addressable storage
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS content (
-      hash TEXT PRIMARY KEY,
-      doc TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    )
-  `);
-
-  // Documents table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      collection TEXT NOT NULL,
-      path TEXT NOT NULL,
-      title TEXT NOT NULL,
-      hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      modified_at TEXT NOT NULL,
-      active INTEGER NOT NULL DEFAULT 1,
-      FOREIGN KEY (hash) REFERENCES content(hash) ON DELETE CASCADE,
-      UNIQUE(collection, path)
-    )
-  `);
-
-  // Content vectors - required for vector search
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS content_vectors (
-      hash TEXT NOT NULL,
-      seq INTEGER NOT NULL DEFAULT 0,
-      pos INTEGER NOT NULL DEFAULT 0,
-      model TEXT NOT NULL,
-      embedded_at TEXT NOT NULL,
-      PRIMARY KEY (hash, seq)
-    )
-  `);
-
-  // vectors_vec is managed by QMD at embedding time because dimensions depend on
-  // the active embedding model. Do not eagerly create it here.
-  // Migration: older Smriti versions created an incompatible vectors_vec table
-  // (embedding-only, no hash_seq), which breaks embed/search paths.
-  try {
-    const vecTable = db
-      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='vectors_vec'`)
-      .get() as { sql: string } | null;
-
-    if (vecTable?.sql && !vecTable.sql.includes("hash_seq")) {
-      db.exec(`DROP TABLE IF EXISTS vectors_vec`);
-    }
-  } catch {
-    // If sqlite-vec isn't loaded or table introspection fails, continue.
-  }
-}
-
-/** Get or create the shared database connection */
-export function getDb(path?: string): Database {
-  if (_db) return _db;
-  const dbPath = path || QMD_DB_PATH;
-  // Ensure parent directory exists before creating database file
-  const dbDir = dirname(dbPath);
-  if (dbDir !== ".") {
-    try {
-      mkdirSync(dbDir, { recursive: true });
-    } catch {
-      // Directory might already exist or be inaccessible (unlikely in normal cases)
-    }
-  }
-  _db = new Database(dbPath);
-  initializeQmdStore(_db);
-  // Also initialize QMD memory tables (sessions, messages)
-  initializeMemoryTables(_db);
+/** Return the cached DB connection. Throws if initSmriti() hasn't been called. */
+export function getDb(): Database {
+  if (!_db) throw new Error("Database not initialized — call initSmriti() first");
   return _db;
 }
 
-/** Close the database connection */
+/** Close the database and release the QMD store. */
 export function closeDb(): void {
-  if (_db) {
-    _db.close();
-    _db = null;
-  }
+  _db = null;
+  closeQmdStore();
 }
 
 // =============================================================================
@@ -168,6 +94,13 @@ export function initializeSmritiTables(db: Database): void {
   }
   try {
     db.exec(`ALTER TABLE smriti_projects ADD COLUMN rule_version TEXT DEFAULT '1.0.0'`);
+  } catch {
+    // Column already exists
+  }
+
+  // density_score on smriti_session_meta
+  try {
+    db.exec(`ALTER TABLE smriti_session_meta ADD COLUMN density_score REAL DEFAULT 0`);
   } catch {
     // Column already exists
   }
@@ -447,6 +380,50 @@ export function initializeSmritiTables(db: Database): void {
       ON smriti_attachments(session_id);
     CREATE INDEX IF NOT EXISTS idx_smriti_voice_notes_session
       ON smriti_voice_notes(session_id);
+
+    -- Semantic session clusters (#66)
+    CREATE TABLE IF NOT EXISTS smriti_session_clusters (
+      session_id   TEXT NOT NULL,
+      cluster_id   INTEGER NOT NULL,
+      cluster_name TEXT,
+      distance     REAL,
+      PRIMARY KEY (session_id, cluster_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_smriti_session_clusters_cluster
+      ON smriti_session_clusters(cluster_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_session_clusters_name
+      ON smriti_session_clusters(cluster_name);
+
+    -- Query aliases generated by expandQuery (issue #60)
+    CREATE TABLE IF NOT EXISTS smriti_session_queries (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      query     TEXT NOT NULL,
+      source    TEXT NOT NULL DEFAULT 'enrich',
+      created_at TEXT NOT NULL,
+      UNIQUE(session_id, query)
+    );
+    CREATE INDEX IF NOT EXISTS idx_smriti_session_queries_session
+      ON smriti_session_queries(session_id);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS smriti_queries_fts USING fts5(
+      session_id UNINDEXED,
+      query,
+      tokenize='porter unicode61'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS smriti_session_queries_ai
+      AFTER INSERT ON smriti_session_queries
+    BEGIN
+      INSERT INTO smriti_queries_fts(rowid, session_id, query)
+      VALUES (new.id, new.session_id, new.query);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS smriti_session_queries_ad
+      AFTER DELETE ON smriti_session_queries
+    BEGIN
+      DELETE FROM smriti_queries_fts WHERE rowid = old.id;
+    END;
   `);
 }
 
@@ -657,14 +634,34 @@ export function migrateFTSToV2(db: Database): void {
 // Convenience
 // =============================================================================
 
-/** Initialize DB, create tables, seed defaults. Returns the DB instance. */
-export function initSmriti(dbPath?: string): Database {
-  const db = getDb(dbPath);
-  // getDb() now calls createStore() which initializes QMD tables,
-  // so we just need to initialize Smriti tables
+/**
+ * Initialize the QMD SDK store, then create all Smriti tables.
+ * Returns the underlying bun:sqlite Database for Smriti table operations.
+ */
+export async function initSmriti(dbPath?: string): Promise<Database> {
+  const resolvedPath = dbPath || QMD_DB_PATH;
+  if (resolvedPath !== ":memory:") {
+    try { mkdirSync(dirname(resolvedPath), { recursive: true }); } catch { /* exists */ }
+  }
+  const store = await createStore({ dbPath: resolvedPath });
+  setQmdStore(store);
+  const db = store.internal.db as unknown as Database;
+  _db = db;
+  initializeMemoryTables(db as any);
   initializeSmritiTables(db);
   seedDefaults(db);
   migrateFTSToV2(db);
+
+  // Register the smriti-sessions QMD collection when the sessions dir exists
+  if (resolvedPath !== ":memory:" && existsSync(SMRITI_SESSIONS_DIR)) {
+    try {
+      await store.addCollection("smriti-sessions", {
+        path: SMRITI_SESSIONS_DIR,
+        pattern: "**/*.md",
+      });
+    } catch { /* collection may already exist */ }
+  }
+
   return db;
 }
 
@@ -812,6 +809,159 @@ export function listAgents(db: Database): Array<{
   parser: string;
 }> {
   return db.prepare(`SELECT * FROM smriti_agents ORDER BY id`).all() as any;
+}
+
+// =============================================================================
+// Project Inspection
+// =============================================================================
+
+export type ProjectInspectReport = {
+  project: {
+    id: string;
+    path: string | null;
+    description: string | null;
+    language: string | null;
+    framework: string | null;
+  } | null;
+  sessionCount: number;
+  messageCount: number;
+  byAgent: Array<{ agent_id: string | null; session_count: number }>;
+  tags: Array<{ category_id: string; session_count: number }>;
+  decisionCount: number;
+  recentSessions: Array<{
+    id: string;
+    title: string;
+    updated_at: string;
+    agent_id: string | null;
+    categories: string;
+  }>;
+};
+
+export type TagUsageEntry = {
+  category_id: string;
+  session_count: number;
+  display_name?: string | null;
+};
+
+export function getTagUsage(db: Database, projectId?: string): TagUsageEntry[] {
+  let query = `
+    SELECT st.category_id, COUNT(DISTINCT st.session_id) as session_count
+    FROM smriti_session_tags st`;
+
+  if (projectId) {
+    query += `
+      JOIN smriti_session_meta sm ON st.session_id = sm.session_id
+      WHERE sm.project_id = ?`;
+  }
+
+  query += `
+    GROUP BY st.category_id
+    ORDER BY session_count DESC`;
+
+  const results = projectId
+    ? (db.prepare(query).all(projectId) as Array<{ category_id: string; session_count: number }>)
+    : (db.prepare(query).all() as Array<{ category_id: string; session_count: number }>);
+
+  return results;
+}
+
+export function getProjectReport(db: Database, projectId: string): ProjectInspectReport | null {
+  // Get project details
+  const projectRow = db
+    .prepare(`SELECT id, path, description, language, framework FROM smriti_projects WHERE id = ?`)
+    .get(projectId) as any;
+
+  if (!projectRow) {
+    return null;
+  }
+
+  // Session count
+  const sessionCountRow = db
+    .prepare(`SELECT COUNT(*) as count FROM smriti_session_meta WHERE project_id = ?`)
+    .get(projectId) as { count: number };
+  const sessionCount = sessionCountRow.count;
+
+  // Message count
+  const messageCountRow = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM memory_messages mm
+       JOIN smriti_session_meta sm ON mm.session_id = sm.session_id
+       WHERE sm.project_id = ?`
+    )
+    .get(projectId) as { count: number };
+  const messageCount = messageCountRow.count;
+
+  // Agent breakdown
+  const byAgent = db
+    .prepare(
+      `SELECT sm.agent_id, COUNT(*) as session_count
+       FROM smriti_session_meta sm
+       WHERE sm.project_id = ?
+       GROUP BY sm.agent_id
+       ORDER BY session_count DESC`
+    )
+    .all(projectId) as Array<{ agent_id: string | null; session_count: number }>;
+
+  // Tag breakdown
+  const tags = db
+    .prepare(
+      `SELECT st.category_id, COUNT(DISTINCT st.session_id) as session_count
+       FROM smriti_session_tags st
+       JOIN smriti_session_meta sm ON st.session_id = sm.session_id
+       WHERE sm.project_id = ?
+       GROUP BY st.category_id
+       ORDER BY session_count DESC`
+    )
+    .all(projectId) as Array<{ category_id: string; session_count: number }>;
+
+  // Decision count (decision or decision/*)
+  const decisionRow = db
+    .prepare(
+      `SELECT COUNT(DISTINCT st.session_id) as count
+       FROM smriti_session_tags st
+       JOIN smriti_session_meta sm ON st.session_id = sm.session_id
+       WHERE sm.project_id = ?
+         AND (st.category_id = 'decision' OR st.category_id LIKE 'decision/%')`
+    )
+    .get(projectId) as { count: number };
+  const decisionCount = decisionRow.count;
+
+  // Recent 5 sessions
+  const recentSessions = db
+    .prepare(
+      `SELECT ms.id, ms.title, ms.updated_at, sm.agent_id,
+              COALESCE(GROUP_CONCAT(DISTINCT st.category_id), '') as categories
+       FROM memory_sessions ms
+       JOIN smriti_session_meta sm ON sm.session_id = ms.id
+       LEFT JOIN smriti_session_tags st ON st.session_id = ms.id
+       WHERE sm.project_id = ?
+       GROUP BY ms.id
+       ORDER BY ms.updated_at DESC
+       LIMIT 5`
+    )
+    .all(projectId) as Array<{
+    id: string;
+    title: string;
+    updated_at: string;
+    agent_id: string | null;
+    categories: string;
+  }>;
+
+  return {
+    project: {
+      id: projectRow.id,
+      path: projectRow.path,
+      description: projectRow.description,
+      language: projectRow.language,
+      framework: projectRow.framework,
+    },
+    sessionCount,
+    messageCount,
+    byAgent,
+    tags,
+    decisionCount,
+    recentSessions,
+  };
 }
 
 // =============================================================================
@@ -1017,4 +1167,180 @@ export function insertVoiceNote(
     `INSERT INTO smriti_voice_notes (message_id, session_id, title, transcript, created_at)
      VALUES (?, ?, ?, ?, ?)`
   ).run(messageId, sessionId, title, transcript, createdAt);
+}
+
+// =============================================================================
+// Knowledge Density Scoring (#62)
+// =============================================================================
+
+export type DensityBreakdown = {
+  toolCalls: number;
+  fileWrites: number;
+  gitOps: number;
+  decisionTags: number;
+  errors: number;
+  totalTokens: number;
+  score: number;
+};
+
+/**
+ * Compute a composite density score (0–1) for a session based on sidecar signals.
+ *
+ * Weights: tool calls 25%, file writes 25%, git ops 20%, decision tags 15%,
+ * errors 10%, token volume 5%. Each signal is linearly capped at a "full" ceiling.
+ */
+export function computeDensityScore(db: Database, sessionId: string): DensityBreakdown {
+  const toolCalls = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_tool_usage WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const fileWrites = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_file_operations
+     WHERE session_id = ? AND operation IN ('write', 'edit', 'create')`
+  ).get(sessionId) as { n: number }).n;
+
+  const gitOps = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_git_operations WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const decisionTags = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_session_tags
+     WHERE session_id = ? AND (category_id = 'decision' OR category_id LIKE 'decision/%')`
+  ).get(sessionId) as { n: number }).n;
+
+  const errors = (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_errors WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const totalTokens = (db.prepare(
+    `SELECT COALESCE(SUM(total_input_tokens + total_output_tokens + total_cache_tokens), 0) as n
+     FROM smriti_session_costs WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+
+  const score =
+    Math.min(toolCalls / 50, 1) * 0.25 +
+    Math.min(fileWrites / 20, 1) * 0.25 +
+    Math.min(gitOps / 10, 1) * 0.20 +
+    Math.min(decisionTags / 3, 1) * 0.15 +
+    Math.min(errors / 10, 1) * 0.10 +
+    Math.min(totalTokens / 200_000, 1) * 0.05;
+
+  return { toolCalls, fileWrites, gitOps, decisionTags, errors, totalTokens, score };
+}
+
+export function updateDensityScore(db: Database, sessionId: string, score: number): void {
+  db.prepare(
+    `UPDATE smriti_session_meta SET density_score = ? WHERE session_id = ?`
+  ).run(score, sessionId);
+}
+
+export function getDensityScore(db: Database, sessionId: string): number {
+  const row = db.prepare(
+    `SELECT density_score FROM smriti_session_meta WHERE session_id = ?`
+  ).get(sessionId) as { density_score: number } | null;
+  return row?.density_score ?? 0;
+}
+
+// =============================================================================
+// Session Query Labels (#60)
+// =============================================================================
+
+export function insertSessionQueries(
+  db: Database,
+  sessionId: string,
+  queries: string[],
+  source: string = "enrich"
+): number {
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    `INSERT OR IGNORE INTO smriti_session_queries(session_id, query, source, created_at)
+     VALUES (?, ?, ?, ?)`
+  );
+  let inserted = 0;
+  for (const q of queries) {
+    const trimmed = q.trim();
+    if (trimmed) {
+      const result = stmt.run(sessionId, trimmed, source, now);
+      inserted += result.changes;
+    }
+  }
+  return inserted;
+}
+
+export function getSessionQueryCount(db: Database, sessionId: string): number {
+  return (db.prepare(
+    `SELECT COUNT(*) as n FROM smriti_session_queries WHERE session_id = ?`
+  ).get(sessionId) as { n: number }).n;
+}
+
+// =============================================================================
+// QMD Document Index (#59 Phase 4)
+// =============================================================================
+
+export function getSessionDocPath(sessionId: string): string {
+  const { join } = require("path");
+  const { SMRITI_SESSIONS_DIR: dir } = require("./config");
+  return join(dir, `${sessionId}.md`);
+}
+
+export function buildSessionDocument(
+  sessionId: string,
+  title: string,
+  agentId: string | null,
+  projectId: string | null,
+  createdAt: string,
+  messages: { role: string; content: string }[]
+): string {
+  const lines: string[] = [
+    `# ${title || sessionId}`,
+    "",
+    `agent: ${agentId || "unknown"}`,
+    `project: ${projectId || "unknown"}`,
+    `date: ${createdAt.split("T")[0]}`,
+    `session_id: ${sessionId}`,
+    "",
+  ];
+  for (const msg of messages) {
+    lines.push(`**${msg.role}**: ${msg.content}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+export async function writeSessionDocument(
+  db: Database,
+  sessionId: string,
+  agentId: string | null,
+  projectId: string | null
+): Promise<void> {
+  const { SMRITI_SESSIONS_DIR: dir } = await import("./config");
+  const { mkdirSync: mkDir, writeFileSync } = await import("fs");
+  mkDir(dir, { recursive: true });
+
+  const session = db.prepare(
+    `SELECT title, created_at FROM memory_sessions WHERE id = ?`
+  ).get(sessionId) as { title: string; created_at: string } | null;
+  if (!session) return;
+
+  const messages = db.prepare(
+    `SELECT role, content FROM memory_messages WHERE session_id = ? ORDER BY created_at ASC`
+  ).all(sessionId) as { role: string; content: string }[];
+
+  const content = buildSessionDocument(sessionId, session.title, agentId, projectId, session.created_at, messages);
+  const { join } = await import("path");
+  writeFileSync(join(dir, `${sessionId}.md`), content, "utf-8");
+}
+
+export function getUnenrichedSessionIds(db: Database, projectId?: string): string[] {
+  const baseQuery = `
+    SELECT sm.session_id
+    FROM smriti_session_meta sm
+    LEFT JOIN smriti_session_queries sq ON sq.session_id = sm.session_id
+    WHERE sq.session_id IS NULL
+    ${projectId ? "AND sm.project_id = ?" : ""}
+  `;
+  const rows = projectId
+    ? db.prepare(baseQuery).all(projectId) as { session_id: string }[]
+    : db.prepare(baseQuery).all() as { session_id: string }[];
+  return rows.map(r => r.session_id);
 }
