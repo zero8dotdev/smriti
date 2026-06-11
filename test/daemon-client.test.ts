@@ -70,7 +70,11 @@ describe("stopDaemon", () => {
     expect(r.state).toBe("not-running");
   });
 
-  test("returns timeout when the daemon doesn't exit in the window", async () => {
+  // win32: there is no signal emulation — process.kill(pid, "SIGTERM") is
+  // TerminateProcess, so stopDaemon() SIGTERMing our own PID kills the test
+  // runner outright (no handler can swallow it). Daemon is unshipped on
+  // Windows; skip there.
+  test.skipIf(process.platform === "win32")("returns timeout when the daemon doesn't exit in the window", async () => {
     // Pin our own PID in the file. We won't actually receive SIGTERM in
     // this test process (the harness installs handlers), but the PID
     // file will keep saying we're alive, so stopDaemon will time out.
