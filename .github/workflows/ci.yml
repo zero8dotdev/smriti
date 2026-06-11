@@ -34,7 +34,7 @@ jobs:
 
       - name: Run tests
         # Fast PR validation on Linux only.
-        run: bun test test/
+        run: bun run test
 
   test-merge:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
@@ -61,7 +61,7 @@ jobs:
 
       - name: Run tests
         # Full cross-platform test matrix for merge branches.
-        run: bun test test/
+        run: bun run test
 
   dev-draft-release:
     name: Push(dev) / Draft Release

@@ -2,9 +2,7 @@
 
 The headline: a long-running `smriti daemon` that captures your sessions across every coding agent in the background. Open Cursor, Codex, or Claude — the daemon watches the filesystem, debounces, and ingests automatically. You stop having to remember which agent you used yesterday, or whether you remembered to `smriti ingest`.
 
-This is the release the postmortem [`docs/papers/stop-hook-never-stopped.md`](../papers/stop-hook-never-stopped.md) gestured at — the daemon shape the lockf mitigation pointed toward. It also reuses everything Smriti was already doing for Claude (the Stop hook continues to work, just as a 5ms socket poke now instead of a full ingest).
-
-Before tagging, we dogfooded the whole pipeline: pointed Smriti at a year of our own sessions across all four agents and had a fleet of analysis agents mine what the developer actually learned. The result is the [Builder Retrospective: May 2025 → June 2026](https://zero8.dev/blog/builder-retrospective-may-2025-june-2026) — and the exercise itself found and fixed real bugs in every non-Claude connector, all included below.
+This is the release the postmortem [`docs/papers/stop-hook-never-stopped.md`](https://github.com/zero8dotdev/smriti/blob/main/docs/papers/stop-hook-never-stopped.md) gestured at — the daemon shape the lockf mitigation pointed toward. It also reuses everything Smriti was already doing for Claude (the Stop hook continues to work, just as a 5ms socket poke now instead of a full ingest).
 
 ## What you get
 
@@ -56,7 +54,7 @@ Three constraints came out of pre-impl smoke tests against Bun 1.3.6, and each o
 - **FS watching uses native `fs.watch({ recursive: true })`, not chokidar.** Chokidar 5.0.0 under Bun fires zero events; native `fs.watch` works correctly on macOS (recursive native) and Linux (walk-and-watch).
 - **DB connections are per-flush, not per-daemon-lifetime.** Repeatedly calling `ingest()` against a single long-lived SQLite handle inside one Bun process climbed to 6.8 GB peak RSS and segfaulted Bun. Opening a fresh connection per flush sidesteps this entirely; the ~30ms cost is invisible inside the 30s debounce window.
 
-All three findings are documented in [`docs/internal/daemon-prd.md`](daemon-prd.md).
+All three findings are documented in [`docs/internal/daemon-prd.md`](https://github.com/zero8dotdev/smriti/blob/main/docs/internal/daemon-prd.md).
 
 ## Ingest correctness — found by dogfooding
 
