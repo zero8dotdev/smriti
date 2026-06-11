@@ -167,7 +167,12 @@ beforeEach(() => {
 
 afterEach(() => {
   globalDb.close();
-  rmSync(tmpDir, { recursive: true, force: true });
+  try {
+    rmSync(tmpDir, { recursive: true, force: true });
+  } catch {
+    // Windows: SQLite file-lock release can lag close(), making rm throw
+    // EBUSY. The dir is under tmpdir() on an ephemeral runner — leak is fine.
+  }
 });
 
 test("discoverCursorSqliteSessions: fullConversationHeadersOnly with 2 bubbles", () => {
