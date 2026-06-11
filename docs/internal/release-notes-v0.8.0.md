@@ -4,6 +4,8 @@ The headline: a long-running `smriti daemon` that captures your sessions across 
 
 This is the release the postmortem [`docs/papers/stop-hook-never-stopped.md`](../papers/stop-hook-never-stopped.md) gestured at — the daemon shape the lockf mitigation pointed toward. It also reuses everything Smriti was already doing for Claude (the Stop hook continues to work, just as a 5ms socket poke now instead of a full ingest).
 
+Before tagging, we dogfooded the whole pipeline: pointed Smriti at a year of our own sessions across all four agents and had a fleet of analysis agents mine what the developer actually learned. The result is the [Builder Retrospective: May 2025 → June 2026](https://zero8.dev/blog/builder-retrospective-may-2025-june-2026) — and the exercise itself found and fixed real bugs in every non-Claude connector, all included below.
+
 ## What you get
 
 - **Cross-agent capture.** Sessions from Claude, Codex, Cline, Copilot, and Cursor are picked up automatically as they're written. No `smriti ingest <agent>` to remember.
@@ -55,6 +57,15 @@ Three constraints came out of pre-impl smoke tests against Bun 1.3.6, and each o
 - **DB connections are per-flush, not per-daemon-lifetime.** Repeatedly calling `ingest()` against a single long-lived SQLite handle inside one Bun process climbed to 6.8 GB peak RSS and segfaulted Bun. Opening a fresh connection per flush sidesteps this entirely; the ~30ms cost is invisible inside the 30s debounce window.
 
 All three findings are documented in [`docs/internal/daemon-prd.md`](daemon-prd.md).
+
+## Ingest correctness — found by dogfooding
+
+Every non-Claude agent connector had silently drifted from the current on-disk formats. All "Sessions found: N, ingested: 0" failure modes, all fixed:
+
+- **Codex** — modern rollouts wrap messages in `{type:"response_item", payload:{...}}` envelopes; the parser now unwraps them and filters injected context (AGENTS.md, environment blocks).
+- **Copilot (VS Code)** — chatSessions moved to `.jsonl` with `{kind:0, v:{...}}` snapshot lines, and text moved to `message.text` / response `value` fields. Discovery and parsing updated.
+- **Cursor** — the big one. Real chat history lives in `globalStorage/state.vscdb` (`composerData:` + `bubbleId:` keys), not project `.cursor/` dirs. New read-only SQLite discovery with composer→workspace project mapping; `smriti ingest cursor` now works with no flags. Recovered 482 sessions / 22k messages on the dev machine.
+- **Backfill correctness** — `addMessage()` honors original message timestamps (history no longer collapses to ingest day); `--force` re-ingest deletes prior messages instead of appending duplicates; `SMRITI_INGEST_NO_ENRICH=1` skips per-session LLM query expansion during bulk backfills (482 queued local-LLM inferences previously pegged the CPU for 20+ minutes).
 
 ## Platforms
 
