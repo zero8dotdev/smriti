@@ -33,6 +33,9 @@ export const CLINE_LOGS_DIR =
 /** GitHub Copilot (VS Code) workspaceStorage root — auto-detected per OS if not set */
 export const COPILOT_STORAGE_DIR = Bun.env.COPILOT_STORAGE_DIR || "";
 
+/** Cursor IDE user directory root — auto-detected per OS if not set */
+export const CURSOR_STORAGE_DIR = Bun.env.CURSOR_STORAGE_DIR || "";
+
 /** Daemon PID file path. Load-bearing for single-instance enforcement. */
 export const DAEMON_PID_FILE = join(HOME, ".cache", "smriti", "daemon.pid");
 

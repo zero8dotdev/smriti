@@ -245,7 +245,8 @@ Ingest options:
   smriti ingest codex          Ingest Codex CLI sessions
   smriti ingest cline          Ingest Cline CLI sessions
   smriti ingest copilot        Ingest GitHub Copilot (VS Code) sessions
-  smriti ingest cursor --project-path <path>
+  smriti ingest cursor                    Ingest Cursor sessions (all workspaces)
+  smriti ingest cursor --project-path <path>  Filter to a specific project path
   smriti ingest file <path> [--format chat|jsonl] [--title <t>] [--whole]
   smriti ingest all            Ingest from all known agents (claude, codex, cline, copilot)
   --force                      Re-ingest sessions (delete sidecar data, re-extract)
