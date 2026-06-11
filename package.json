@@ -20,6 +20,7 @@
     "release:meta": "bun run scripts/release-meta.ts"
   },
   "dependencies": {
+    "fast-glob": "3.3.3",
     "node-llama-cpp": "^3.0.0",
     "picomatch": "^4.0.0",
     "qmd": "file:./qmd"
