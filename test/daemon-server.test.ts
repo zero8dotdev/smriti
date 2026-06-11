@@ -75,7 +75,9 @@ describe("startDaemon", () => {
   beforeEach(cleanupDaemonState);
   afterEach(cleanupDaemonState);
 
-  test("writes PID file and binds socket, shutdown() reverses both", async () => {
+  // win32: AF_UNIX socket binding behaves differently and the daemon is
+  // unshipped on Windows — skip the real-socket test there.
+  test.skipIf(process.platform === "win32")("writes PID file and binds socket, shutdown() reverses both", async () => {
     const logs: string[] = [];
     const handle = await startDaemon({ log: (m) => logs.push(m) });
 
