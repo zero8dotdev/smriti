@@ -117,7 +117,14 @@ function isConventional(c: Commit): boolean {
 
 function getCommits(rangeFrom: string | null, rangeTo: string): Commit[] {
   const range = rangeFrom ? `${rangeFrom}..${rangeTo}` : rangeTo;
-  const raw = run(`git log --no-merges --pretty=format:%H%x09%s%x09%b ${range}`);
+  // Not run()'s full .trim(): the oldest commit in range can have an empty
+  // body, leaving a trailing %x09 as the last character of the whole
+  // output. A full trim() strips that tab along with it, dropping that
+  // commit's field count below 3 and silently discarding it from
+  // getCommits()'s result (and thus from release notes / commit_count).
+  const raw = execSync(`git log --no-merges --pretty=format:%H%x09%s%x09%b ${range}`, {
+    encoding: "utf8",
+  }).replace(/\n+$/, "");
   if (!raw) return [];
   return raw
     .split("\n")

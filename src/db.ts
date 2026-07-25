@@ -27,10 +27,10 @@ export function getDb(): Database {
   return _db;
 }
 
-/** Close the database and release the QMD store. */
-export function closeDb(): void {
+/** Close the database and release the QMD store (including its LLM backend). */
+export async function closeDb(): Promise<void> {
   _db = null;
-  closeQmdStore();
+  await closeQmdStore();
 }
 
 // =============================================================================
@@ -647,6 +647,11 @@ export async function initSmriti(dbPath?: string): Promise<Database> {
   setQmdStore(store);
   const db = store.internal.db as unknown as Database;
   _db = db;
+  // busy_timeout is per-connection, not persisted in the DB file — set it on
+  // every open. Without it, two processes opening the same SQLite file at
+  // once (e.g. the daemon's flush and a manual `smriti ingest --force`) fail
+  // immediately with "database is locked" instead of retrying briefly.
+  db.exec("PRAGMA busy_timeout = 5000");
   initializeMemoryTables(db as any);
   initializeSmritiTables(db);
   seedDefaults(db);

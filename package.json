@@ -1,6 +1,6 @@
 {
   "name": "smriti",
-  "version": "0.8.0",
+  "version": "0.8.2",
   "description": "Smriti - Unified memory layer across all AI agents",
   "type": "module",
   "bin": {
@@ -17,7 +17,8 @@
     "bench:scorecard": "bun run scripts/bench-scorecard.ts --baseline bench/baseline.ci-small.json --profile ci-small --threshold-pct 20",
     "bench:ingest-hotpaths": "bun run scripts/bench-ingest-hotpaths.ts",
     "bench:ingest-pipeline": "bun run scripts/bench-ingest-pipeline.ts --sessions 120 --messages 12",
-    "release:meta": "bun run scripts/release-meta.ts"
+    "release:meta": "bun run scripts/release-meta.ts",
+    "monitor": "bun run scripts/monitor-resources.ts"
   },
   "dependencies": {
     "fast-glob": "3.3.3",

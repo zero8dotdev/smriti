@@ -21,8 +21,8 @@ beforeAll(async () => {
   db = await initSmriti(":memory:");
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeDb();
 });
 
 // =============================================================================

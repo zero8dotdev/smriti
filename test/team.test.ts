@@ -25,8 +25,8 @@ beforeAll(async () => {
   mkdirSync(tmpDir, { recursive: true });
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeDb();
   try { rmSync(tmpDir, { recursive: true }); } catch {}
 });
 

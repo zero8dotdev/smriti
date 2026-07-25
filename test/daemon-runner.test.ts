@@ -161,4 +161,45 @@ describe("runDaemon", () => {
     await daemon.shutdown(); // should not throw
     expect(true).toBe(true); // assertion presence
   });
+
+  const ENRICH_ENV_KEY = "SMRITI_INGEST_NO_ENRICH";
+  // Read via a non-literal key so TS doesn't (incorrectly) narrow this to
+  // `undefined` from the `delete` below — it can't see that runDaemon()
+  // mutates process.env internally.
+  const readEnrichFlag = () => process.env[ENRICH_ENV_KEY];
+
+  test("sets SMRITI_INGEST_NO_ENRICH by default so routine ingest never triggers LLM enrichment", async () => {
+    const original = readEnrichFlag();
+    delete process.env[ENRICH_ENV_KEY];
+    try {
+      const daemon = await runDaemon({
+        agentRoots: [],
+        flushAgent: () => {},
+        log: () => {},
+      });
+      expect(readEnrichFlag()).toBe("1");
+      await daemon.shutdown();
+    } finally {
+      if (original === undefined) delete process.env[ENRICH_ENV_KEY];
+      else process.env[ENRICH_ENV_KEY] = original;
+    }
+  });
+
+  test("enrichOnIngest: true opts back into LLM enrichment during ingest", async () => {
+    const original = readEnrichFlag();
+    delete process.env[ENRICH_ENV_KEY];
+    try {
+      const daemon = await runDaemon({
+        agentRoots: [],
+        flushAgent: () => {},
+        log: () => {},
+        enrichOnIngest: true,
+      });
+      expect(readEnrichFlag()).toBeUndefined();
+      await daemon.shutdown();
+    } finally {
+      if (original === undefined) delete process.env[ENRICH_ENV_KEY];
+      else process.env[ENRICH_ENV_KEY] = original;
+    }
+  });
 });
