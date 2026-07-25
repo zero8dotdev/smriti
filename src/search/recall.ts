@@ -9,6 +9,7 @@ import { DEFAULT_RECALL_LIMIT, OLLAMA_HOST, OLLAMA_MODEL } from "../config";
 import { recallMemories, ollamaRecall } from "../qmd";
 import { searchFiltered, type SearchFilters, type SearchResult } from "./index";
 import { getQmdStore } from "../store";
+import { incrementRetrievalCount } from "../db";
 
 // =============================================================================
 // Types
@@ -26,6 +27,24 @@ export type RecallResult = {
   results: SearchResult[];
   synthesis?: string;
 };
+
+// =============================================================================
+// Retrieval Tracking
+// =============================================================================
+
+/**
+ * Best-effort bump of retrieval_count for any consolidated knowledge units
+ * belonging to the recalled sessions. Never lets a tracking failure break recall.
+ */
+function trackRetrieval(db: Database, results: SearchResult[]): void {
+  try {
+    for (const sessionId of new Set(results.map((r) => r.session_id).filter(Boolean))) {
+      incrementRetrievalCount(db, sessionId);
+    }
+  } catch {
+    // Never let this break recall.
+  }
+}
 
 // =============================================================================
 // Filtered Recall
@@ -58,6 +77,7 @@ export async function recall(
       if (options.synthesize && storeResults.length > 0) {
         synthesis = await synthesizeResults(query, storeResults, options);
       }
+      trackRetrieval(db, storeResults);
       return { results: storeResults, synthesis };
     }
 
@@ -70,6 +90,7 @@ export async function recall(
       fast: options.fast,
       intent: rerankIntent,
     });
+    trackRetrieval(db, qmdResult.results);
     return {
       results: qmdResult.results,
       synthesis: qmdResult.synthesis,
@@ -102,6 +123,7 @@ export async function recall(
     synthesis = await synthesizeResults(query, deduped, options);
   }
 
+  trackRetrieval(db, deduped);
   return { results: deduped, synthesis };
 }
 

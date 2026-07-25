@@ -269,6 +269,63 @@ export function formatShareResult(result: {
 }
 
 // =============================================================================
+// Consolidate Result Formatting
+// =============================================================================
+
+export function formatConsolidateResult(result: {
+  sessionsSegmented: number;
+  unitsStored: number;
+  unitsSkipped: number;
+  unitsPromoted: number;
+  errors: string[];
+}): string {
+  const lines = [
+    `Sessions segmented: ${result.sessionsSegmented}`,
+    `Units stored: ${result.unitsStored}`,
+    `Units skipped (dedup): ${result.unitsSkipped}`,
+    `Units promoted: ${result.unitsPromoted}`,
+  ];
+
+  if (result.errors.length > 0) {
+    lines.push(`Errors: ${result.errors.length}`);
+    for (const err of result.errors.slice(0, 5)) {
+      lines.push(`  - ${err}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Knowledge Units (Learnings) Formatting
+// =============================================================================
+
+export function formatLearnings(
+  units: Array<{
+    tier: string;
+    topic: string;
+    category: string;
+    retrieval_count: number;
+    relevance: number;
+    canonical_doc_path: string | null;
+  }>
+): string {
+  if (units.length === 0) return "No knowledge units found.";
+
+  const headers = ["Tier", "Topic", "Category", "Retrievals", "Relevance", "Doc Path"];
+  const rows = units.map((u) => [
+    u.tier === "canonical" ? "✓ canonical" : "segmented",
+    u.topic,
+    u.category,
+    String(u.retrieval_count),
+    u.relevance.toFixed(1),
+    u.canonical_doc_path || "-",
+  ]);
+
+  return table(headers, rows, [14, 40, 20, 10, 9, 40]);
+}
+
+// =============================================================================
 // Sync Result Formatting
 // =============================================================================
 

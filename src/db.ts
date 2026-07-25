@@ -14,6 +14,7 @@ import { QMD_DB_PATH, SMRITI_SESSIONS_DIR } from "./config";
 import { initializeMemoryTables } from "./qmd";
 import { createStore } from "../qmd/src/index";
 import { setQmdStore, closeQmdStore } from "./store";
+import type { KnowledgeUnit } from "./team/types";
 
 // =============================================================================
 // Connection
@@ -203,6 +204,33 @@ export function initializeSmritiTables(db: Database): void {
       relevance_score REAL,
       entities TEXT
     );
+
+    -- Knowledge consolidation: raw Stage-1 extracts, promoted to canonical on reuse
+    CREATE TABLE IF NOT EXISTS smriti_knowledge_units (
+      id TEXT PRIMARY KEY,                    -- KnowledgeUnit.id (uuid)
+      session_id TEXT NOT NULL,
+      project_id TEXT,
+      topic TEXT NOT NULL,
+      category TEXT NOT NULL,
+      relevance REAL NOT NULL DEFAULT 0,      -- 0-10, from Stage 1
+      entities TEXT,                          -- JSON array
+      files TEXT,                             -- JSON array
+      plain_text TEXT NOT NULL,               -- raw Stage-1 extract
+      line_ranges TEXT,                       -- JSON array of {start,end}
+      content_hash TEXT NOT NULL,             -- hashContent({topic,category,plainText}) — Stage-1 dedup key
+      tier TEXT NOT NULL DEFAULT 'segmented', -- 'segmented' | 'canonical'
+      retrieval_count INTEGER NOT NULL DEFAULT 0,
+      last_recalled_at TEXT,
+      promoted_at TEXT,
+      canonical_doc_path TEXT,                -- relative path under .smriti/knowledge/, set on promotion
+      share_id TEXT,                          -- points at the smriti_shares row created on promotion
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_smriti_knowledge_units_session ON smriti_knowledge_units(session_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_knowledge_units_hash ON smriti_knowledge_units(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_smriti_knowledge_units_tier ON smriti_knowledge_units(tier);
 
     -- Tool usage tracking
     CREATE TABLE IF NOT EXISTS smriti_tool_usage (
@@ -1244,6 +1272,187 @@ export function getDensityScore(db: Database, sessionId: string): number {
     `SELECT density_score FROM smriti_session_meta WHERE session_id = ?`
   ).get(sessionId) as { density_score: number } | null;
   return row?.density_score ?? 0;
+}
+
+// =============================================================================
+// Knowledge Consolidation (Progressive Summarization)
+// =============================================================================
+
+export interface StoredKnowledgeUnit {
+  id: string;
+  session_id: string;
+  project_id: string | null;
+  topic: string;
+  category: string;
+  relevance: number;
+  entities: string[];
+  files: string[];
+  plain_text: string;
+  line_ranges: Array<{ start: number; end: number }>;
+  content_hash: string;
+  tier: "segmented" | "canonical";
+  retrieval_count: number;
+  last_recalled_at: string | null;
+  promoted_at: string | null;
+  canonical_doc_path: string | null;
+  share_id: string | null;
+}
+
+type KnowledgeUnitRow = {
+  id: string;
+  session_id: string;
+  project_id: string | null;
+  topic: string;
+  category: string;
+  relevance: number;
+  entities: string | null;
+  files: string | null;
+  plain_text: string;
+  line_ranges: string | null;
+  content_hash: string;
+  tier: string;
+  retrieval_count: number;
+  last_recalled_at: string | null;
+  promoted_at: string | null;
+  canonical_doc_path: string | null;
+  share_id: string | null;
+};
+
+function deserializeKnowledgeUnit(row: KnowledgeUnitRow): StoredKnowledgeUnit {
+  return {
+    ...row,
+    entities: row.entities ? JSON.parse(row.entities) : [],
+    files: row.files ? JSON.parse(row.files) : [],
+    line_ranges: row.line_ranges ? JSON.parse(row.line_ranges) : [],
+    tier: row.tier as "segmented" | "canonical",
+  };
+}
+
+/**
+ * Insert a Stage-1 knowledge unit if its content hash isn't already stored.
+ * Returns true if inserted, false if it was a duplicate (caller distinguishes
+ * "stored" from "skipped" the same way shareSegmentedKnowledge does for shares).
+ */
+export function insertKnowledgeUnit(
+  db: Database,
+  unit: KnowledgeUnit,
+  sessionId: string,
+  projectId: string | null,
+  contentHash: string
+): boolean {
+  const exists = db
+    .prepare(`SELECT 1 FROM smriti_knowledge_units WHERE content_hash = ?`)
+    .get(contentHash);
+  if (exists) return false;
+
+  db.prepare(
+    `INSERT INTO smriti_knowledge_units
+      (id, session_id, project_id, topic, category, relevance, entities, files, plain_text, line_ranges, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    unit.id,
+    sessionId,
+    projectId,
+    unit.topic,
+    unit.category,
+    unit.relevance,
+    JSON.stringify(unit.entities || []),
+    JSON.stringify(unit.files || []),
+    unit.plainText,
+    JSON.stringify(unit.lineRanges || []),
+    contentHash
+  );
+  return true;
+}
+
+/** Dense sessions (by density_score) that haven't been segmented into knowledge units yet. */
+export function findUnsegmentedDenseSessions(
+  db: Database,
+  minDensity: number,
+  limit?: number
+): Array<{ session_id: string; project_id: string | null; density_score: number }> {
+  const query = `
+    SELECT sm.session_id, sm.project_id, sm.density_score
+    FROM smriti_session_meta sm
+    WHERE sm.density_score >= ?
+      AND NOT EXISTS (SELECT 1 FROM smriti_knowledge_units ku WHERE ku.session_id = sm.session_id)
+    ORDER BY sm.density_score DESC
+    ${limit ? "LIMIT ?" : ""}
+  `;
+  const rows = limit
+    ? db.prepare(query).all(minDensity, limit)
+    : db.prepare(query).all(minDensity);
+  return rows as Array<{ session_id: string; project_id: string | null; density_score: number }>;
+}
+
+/** Segmented units that have proven reuse (via recall) or scored high relevance at extraction time. */
+export function findPromotableUnits(
+  db: Database,
+  minRetrievals: number,
+  minRelevance: number
+): StoredKnowledgeUnit[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM smriti_knowledge_units
+       WHERE tier = 'segmented' AND (retrieval_count >= ? OR relevance >= ?)`
+    )
+    .all(minRetrievals, minRelevance) as KnowledgeUnitRow[];
+  return rows.map(deserializeKnowledgeUnit);
+}
+
+/** Bump retrieval_count for any knowledge units belonging to a recalled session. No-op if none exist yet. */
+export function incrementRetrievalCount(db: Database, sessionId: string): void {
+  db.prepare(
+    `UPDATE smriti_knowledge_units
+     SET retrieval_count = retrieval_count + 1,
+         last_recalled_at = datetime('now'),
+         updated_at = datetime('now')
+     WHERE session_id = ?`
+  ).run(sessionId);
+}
+
+export function promoteKnowledgeUnit(
+  db: Database,
+  unitId: string,
+  canonicalDocPath: string,
+  shareId: string
+): void {
+  db.prepare(
+    `UPDATE smriti_knowledge_units
+     SET tier = 'canonical', promoted_at = datetime('now'),
+         canonical_doc_path = ?, share_id = ?, updated_at = datetime('now')
+     WHERE id = ?`
+  ).run(canonicalDocPath, shareId, unitId);
+}
+
+export function listKnowledgeUnits(
+  db: Database,
+  options: { tier?: "segmented" | "canonical"; minRetrievals?: number; limit?: number } = {}
+): StoredKnowledgeUnit[] {
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (options.tier) {
+    conditions.push("tier = ?");
+    params.push(options.tier);
+  }
+  if (options.minRetrievals !== undefined) {
+    conditions.push("retrieval_count >= ?");
+    params.push(options.minRetrievals);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const limitClause = options.limit ? "LIMIT ?" : "";
+  if (options.limit) params.push(options.limit);
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM smriti_knowledge_units ${where}
+       ORDER BY retrieval_count DESC, relevance DESC
+       ${limitClause}`
+    )
+    .all(...params) as KnowledgeUnitRow[];
+  return rows.map(deserializeKnowledgeUnit);
 }
 
 // =============================================================================

@@ -7,7 +7,7 @@
  * schema-based categorization, and team knowledge sharing.
  */
 
-import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, getTagUsage, computeDensityScore, updateDensityScore, insertSessionQueries, getUnenrichedSessionIds } from "./db";
+import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, getTagUsage, computeDensityScore, updateDensityScore, insertSessionQueries, getUnenrichedSessionIds, listKnowledgeUnits } from "./db";
 import { getMessages, getSession, getMemoryStatus, embedMemoryMessages } from "./qmd";
 import { ingest, ingestAll } from "./ingest/index";
 import { categorizeUncategorized } from "./categorize/classifier";
@@ -16,6 +16,7 @@ import { searchFiltered, listSessions } from "./search/index";
 import { recall } from "./search/recall";
 import { shareKnowledge } from "./team/share";
 import { syncTeamKnowledge, listTeamContributions } from "./team/sync";
+import { consolidateKnowledge } from "./learn/consolidate";
 import {
   generateContext,
   compareSessions,
@@ -53,6 +54,8 @@ import {
   formatTagUsage,
   formatDensityBreakdown,
   formatDigest,
+  formatConsolidateResult,
+  formatLearnings,
   json,
 } from "./format";
 import { generateDigest } from "./digest";
@@ -213,6 +216,8 @@ Commands:
   compare <a> <b>              Compare two sessions (tokens, tools, files)
   compare --last               Compare last 2 sessions for current project
   share [filters]              Export knowledge to .smriti/
+  consolidate [options]        Segment dense sessions, promote reused knowledge units
+  learnings [options]          List extracted knowledge units (tier, retrievals, relevance)
   sync                         Import team knowledge from .smriti/
   team                         View team contributions
   list [filters]               List sessions
@@ -809,6 +814,42 @@ async function main() {
         });
 
         console.log(formatShareResult(result));
+        break;
+      }
+
+      // =====================================================================
+      // CONSOLIDATE
+      // =====================================================================
+      case "consolidate": {
+        const result = await consolidateKnowledge(db, {
+          minDensity: Number(getArg(args, "--min-density")) || undefined,
+          minRetrievals: Number(getArg(args, "--min-retrievals")) || undefined,
+          minRelevance: Number(getArg(args, "--min-relevance")) || undefined,
+          model: getArg(args, "--model"),
+          outputDir: getArg(args, "--output"),
+          sessionLimit: Number(getArg(args, "--session-limit")) || undefined,
+          onProgress: (msg) => console.log(`  ${msg}`),
+        });
+
+        console.log(formatConsolidateResult(result));
+        break;
+      }
+
+      // =====================================================================
+      // LEARNINGS
+      // =====================================================================
+      case "learnings": {
+        const units = listKnowledgeUnits(db, {
+          tier: getArg(args, "--tier") as "segmented" | "canonical" | undefined,
+          minRetrievals: Number(getArg(args, "--min-retrievals")) || undefined,
+          limit: Number(getArg(args, "--limit")) || 50,
+        });
+
+        if (hasFlag(args, "--json")) {
+          console.log(json(units));
+        } else {
+          console.log(formatLearnings(units));
+        }
         break;
       }
 

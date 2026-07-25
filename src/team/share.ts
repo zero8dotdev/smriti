@@ -140,7 +140,7 @@ function querySessions(
 }
 
 /** Get messages for a session */
-function getSessionMessages(
+export function getSessionMessages(
   db: Database,
   sessionId: string
 ): Array<{
