@@ -19,8 +19,13 @@ export function getQmdStore(): QMDStore {
   return _store;
 }
 
-export function closeQmdStore(): void {
+export async function closeQmdStore(): Promise<void> {
   if (_store) {
+    // Dispose the LlamaCpp/Llama backend explicitly instead of leaving it
+    // to the 5-min inactivity timer — otherwise a fresh Store created on
+    // the next initSmriti() call (e.g. the daemon's per-flush open) can
+    // overlap with the still-loaded previous instance.
+    try { await _store.internal.llm?.dispose(); } catch { /* best-effort */ }
     _store.internal.close();
     _store = null;
   }

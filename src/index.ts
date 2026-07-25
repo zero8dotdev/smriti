@@ -1508,7 +1508,7 @@ async function main() {
         process.exit(1);
     }
   } finally {
-    closeDb();
+    await closeDb();
   }
 }
 

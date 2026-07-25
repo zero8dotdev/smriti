@@ -126,6 +126,46 @@ function summarize(all: Sample[]): ProcSummary[] {
   return [...byPid.values()].sort((a, b) => b.peakRssKb - a.peakRssKb);
 }
 
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for a spawned child to exit. Races the real `exited` promise against
+ * periodic liveness checks, because `child.exited` has been observed to
+ * never resolve even after the child process has fully terminated (no
+ * zombie, no remaining process) — a real hang seen during a long `smriti
+ * ingest --force` run. Once we've seen the pid alive at least once and then
+ * can no longer find it, treat that as exit rather than waiting forever.
+ */
+async function waitForChildExit(child: Bun.Subprocess, pollMs: number): Promise<number | null> {
+  let sawAlive = false;
+  while (true) {
+    const raced = await Promise.race([
+      child.exited.then((code) => ({ done: true as const, code })),
+      Bun.sleep(pollMs).then(() => ({ done: false as const, code: null })),
+    ]);
+    if (raced.done) return raced.code;
+
+    if (isPidAlive(child.pid)) {
+      sawAlive = true;
+      continue;
+    }
+    if (sawAlive) {
+      console.error(
+        `[monitor] child.exited did not resolve after pid ${child.pid} was no longer running — treating as exited.`
+      );
+      return null;
+    }
+    // else: pid not observed yet (spawn race at startup) — keep waiting.
+  }
+}
+
 function printSummary(all: Sample[]) {
   const procs = summarize(all);
   if (procs.length === 0) {
@@ -167,11 +207,11 @@ async function main() {
   } else {
     console.log(`Sampling /${pattern.source}/ every ${intervalMs}ms while running: ${execCommand.join(" ")}`);
     const child = Bun.spawn(execCommand, { stdout: "inherit", stderr: "inherit" });
-    const exitCode = await child.exited;
+    const exitCode = await waitForChildExit(child, Math.min(intervalMs, 500));
     stopped = true;
     await loop;
     printSummary(allSamples);
-    process.exit(exitCode);
+    process.exit(exitCode ?? 0);
   }
 }
 
