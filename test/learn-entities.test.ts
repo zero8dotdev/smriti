@@ -285,6 +285,54 @@ test("promote phase persists LLM-inferred relatesTo/supersedes/contradicts edges
   }
 });
 
+test("promote phase never asserts a directional predicate in both directions for the same pair", async () => {
+  // Two units sharing an entity, BOTH clearing the promotion bar in the same
+  // run — each independently asks "do I supersede the other" and (with a
+  // naive LLM/mock that doesn't reason about recency) can get "yes" from both
+  // sides. Only one direction should end up persisted.
+  const unitA: KnowledgeUnit = {
+    id: "bidir-unit-a", topic: "Redis TTL: 1 minute", category: "architecture/decision", relevance: 9,
+    entities: [], files: [], plainText: "Use a 1-minute TTL.", lineRanges: [],
+  };
+  const unitB: KnowledgeUnit = {
+    id: "bidir-unit-b", topic: "Redis TTL: 15 minutes", category: "architecture/decision", relevance: 9,
+    entities: [], files: [], plainText: "Use a 15-minute TTL instead.", lineRanges: [],
+  };
+  insertKnowledgeUnit(db, unitA, "bidir-s1", "bidirproj", "bidir-hash-a");
+  insertKnowledgeUnit(db, unitB, "bidir-s2", "bidirproj", "bidir-hash-b");
+  const entityId = resolveEntity(db, "bidir-redis")!;
+  insertRelationship(db, "knowledge_unit", "bidir-unit-a", "mentions", "entity", entityId);
+  insertRelationship(db, "knowledge_unit", "bidir-unit-b", "mentions", "entity", entityId);
+
+  const originalFetch = globalThis.fetch;
+  // Always answers "supersedes" regardless of which side is asking — the
+  // worst case for this bug, and realistic for a small/local model given a
+  // prompt with no explicit recency signal.
+  globalThis.fetch = mockOllamaFetch({ relation: () => "RELATION [0]: supersedes" }) as any;
+
+  try {
+    const result = await consolidateKnowledge(db, {
+      minDensity: 999,
+      minRetrievals: 999,
+      minRelevance: 8, // both unitA and unitB qualify
+      outputDir: join(tmpDir, "bidir-output"),
+    });
+
+    expect(result.unitsPromoted).toBe(2);
+
+    const aToB = getRelationships(db, {
+      subjectType: "knowledge_unit", subjectId: "bidir-unit-a", predicate: "supersedes", objectId: "bidir-unit-b",
+    });
+    const bToA = getRelationships(db, {
+      subjectType: "knowledge_unit", subjectId: "bidir-unit-b", predicate: "supersedes", objectId: "bidir-unit-a",
+    });
+    // Exactly one direction persisted, never both.
+    expect(aToB.length + bToA.length).toBe(1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("promote phase relationship inference is best-effort: a broken LLM response doesn't block promotion", async () => {
   const existing: KnowledgeUnit = {
     id: "badllm-existing", topic: "Existing", category: "code/pattern", relevance: 5,

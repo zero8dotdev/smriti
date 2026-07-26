@@ -313,6 +313,21 @@ RELATION [i]: relatesTo|supersedes|contradicts|none`;
       const candidate = candidates[index];
       if (!predicate || !candidate) continue;
 
+      // Directional predicates shouldn't hold in both directions for the same
+      // pair. When two entity-sharing units are promoted in the same run,
+      // each independently asks "do I relate to/supersede the other" — if the
+      // candidate already asserted the reverse relation (e.g. its own
+      // promotion ran first in this batch), keep that one and skip the
+      // contradictory reverse edge rather than storing both.
+      const reverseAlreadyAsserted = getRelationships(db, {
+        subjectType: "knowledge_unit",
+        subjectId: candidate.id,
+        predicate,
+        objectType: "knowledge_unit",
+        objectId: unit.id,
+      }).length > 0;
+      if (reverseAlreadyAsserted) continue;
+
       insertRelationship(db, "knowledge_unit", unit.id, predicate, "knowledge_unit", candidate.id, {
         source: "llm",
       });
