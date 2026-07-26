@@ -252,7 +252,11 @@ export async function consolidateKnowledge(
 // Relationship Inference (promote-time, LLM-gated)
 // =============================================================================
 
-const RELATION_LINE = /RELATION\s*\[(\d+)\]:\s*(relatesTo|supersedes|contradicts|none)/gi;
+// Brackets optional: models reliably get the index and predicate right but
+// don't reliably reproduce "[i]" literally (observed: "RELATION 0: supersedes"
+// instead of "RELATION [0]: supersedes") — a strict bracket requirement here
+// silently drops otherwise-correct answers.
+const RELATION_LINE = /RELATION\s*\[?(\d+)\]?:\s*(relatesTo|supersedes|contradicts|none)/gi;
 const MAX_EXCERPT_CHARS = 800;
 
 // Case-insensitive regex match -> canonical camelCase predicate (avoid a blind
@@ -305,7 +309,9 @@ RELATION [i]: relatesTo|supersedes|contradicts|none`;
 
     const response = await callOllama(prompt, { model });
 
+    let matched = 0;
     for (const match of response.matchAll(RELATION_LINE)) {
+      matched++;
       const index = Number(match[1]);
       const raw = match[2].toLowerCase();
       if (raw === "none") continue;
@@ -331,6 +337,16 @@ RELATION [i]: relatesTo|supersedes|contradicts|none`;
       insertRelationship(db, "knowledge_unit", unit.id, predicate, "knowledge_unit", candidate.id, {
         source: "llm",
       });
+    }
+
+    // A non-empty response that yields zero parsed lines almost always means
+    // the model drifted from the expected format, not that every candidate
+    // was genuinely unrelated — surface it instead of promoting in silence.
+    if (matched === 0 && response.trim().length > 0) {
+      console.warn(
+        `inferRelationships: parsed 0 relation lines from a non-empty response for unit ${unit.id} — response may not match the expected format:`,
+        truncate(response, 300)
+      );
     }
   } catch {
     // Enrichment only — never block promotion on a failed/unparseable relation call.
