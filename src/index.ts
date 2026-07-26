@@ -17,6 +17,7 @@ import { recall } from "./search/recall";
 import { shareKnowledge } from "./team/share";
 import { syncTeamKnowledge, listTeamContributions } from "./team/sync";
 import { consolidateKnowledge } from "./learn/consolidate";
+import { findEntity, getUnitsForEntity, getRelationships } from "./learn/entities";
 import {
   generateContext,
   compareSessions,
@@ -56,6 +57,7 @@ import {
   formatDigest,
   formatConsolidateResult,
   formatLearnings,
+  formatEntityGraph,
   json,
 } from "./format";
 import { generateDigest } from "./digest";
@@ -218,6 +220,7 @@ Commands:
   share [filters]              Export knowledge to .smriti/
   consolidate [options]        Segment dense sessions, promote reused knowledge units
   learnings [options]          List extracted knowledge units (tier, retrievals, relevance)
+  graph <entity>               Show a canonical entity's mentions and relationship edges
   sync                         Import team knowledge from .smriti/
   team                         View team contributions
   list [filters]               List sessions
@@ -825,6 +828,7 @@ async function main() {
           minDensity: Number(getArg(args, "--min-density")) || undefined,
           minRetrievals: Number(getArg(args, "--min-retrievals")) || undefined,
           minRelevance: Number(getArg(args, "--min-relevance")) || undefined,
+          minEntityReach: Number(getArg(args, "--min-entity-reach")) || undefined,
           model: getArg(args, "--model"),
           outputDir: getArg(args, "--output"),
           sessionLimit: Number(getArg(args, "--session-limit")) || undefined,
@@ -849,6 +853,37 @@ async function main() {
           console.log(json(units));
         } else {
           console.log(formatLearnings(units));
+        }
+        break;
+      }
+
+      // =====================================================================
+      // GRAPH
+      // =====================================================================
+      case "graph": {
+        const query = getPositional(args, 1);
+        if (!query) {
+          console.error("Usage: smriti graph <entity>");
+          process.exit(1);
+        }
+
+        const entity = findEntity(db, query);
+        if (!entity) {
+          console.log(`No entity found matching "${query}".`);
+          break;
+        }
+
+        const units = getUnitsForEntity(db, entity.id);
+        const unitIds = new Set(units.map((u) => u.id));
+        const edges = units.flatMap((u) =>
+          getRelationships(db, { subjectType: "knowledge_unit", subjectId: u.id })
+            .filter((r) => r.predicate !== "mentions" && unitIds.has(r.object_id))
+        );
+
+        if (hasFlag(args, "--json")) {
+          console.log(json({ entity, units, edges }));
+        } else {
+          console.log(formatEntityGraph(entity, units, edges));
         }
         break;
       }

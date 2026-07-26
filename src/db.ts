@@ -232,6 +232,40 @@ export function initializeSmritiTables(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_smriti_knowledge_units_hash ON smriti_knowledge_units(content_hash);
     CREATE INDEX IF NOT EXISTS idx_smriti_knowledge_units_tier ON smriti_knowledge_units(tier);
 
+    -- Canonical entity registry: resolves free-text entity mentions (from Stage 1
+    -- extraction) onto a stable node, so recurrence is detected regardless of wording.
+    -- Propagated team/org-wide via .smriti/config.json, same mechanism as custom categories.
+    CREATE TABLE IF NOT EXISTS smriti_entities (
+      id TEXT PRIMARY KEY,                          -- slug, e.g. "jwt", "redis"
+      label TEXT NOT NULL,                          -- canonical display name
+      entity_type TEXT NOT NULL DEFAULT 'concept',  -- 'technology' | 'concept' | 'file' | 'pattern'
+      aliases TEXT NOT NULL DEFAULT '[]',           -- JSON array of raw strings seen
+      mention_count INTEGER NOT NULL DEFAULT 0,
+      first_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_smriti_entities_label ON smriti_entities(label);
+
+    -- Relationship triples (subject/object polymorphic via type+id, not literal RDF URIs).
+    -- knowledge_unit -mentions-> entity edges come free from Stage-1 extraction;
+    -- knowledge_unit -relatesTo/supersedes/contradicts-> knowledge_unit edges are LLM-gated,
+    -- only at promotion time (see src/learn/consolidate.ts), persisting what
+    -- ollamaCheckConflicts previously only computed ephemerally.
+    CREATE TABLE IF NOT EXISTS smriti_relationships (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject_type TEXT NOT NULL,   -- 'knowledge_unit' | 'entity' | 'session'
+      subject_id TEXT NOT NULL,
+      predicate TEXT NOT NULL,      -- 'mentions' | 'relatesTo' | 'supersedes' | 'contradicts'
+      object_type TEXT NOT NULL,
+      object_id TEXT NOT NULL,
+      confidence REAL DEFAULT 1.0,
+      source TEXT DEFAULT 'extraction',  -- 'extraction' | 'derived' | 'llm'
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(subject_type, subject_id, predicate, object_type, object_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_smriti_relationships_subject ON smriti_relationships(subject_type, subject_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_relationships_object ON smriti_relationships(object_type, object_id);
+    CREATE INDEX IF NOT EXISTS idx_smriti_relationships_predicate ON smriti_relationships(predicate);
+
     -- Tool usage tracking
     CREATE TABLE IF NOT EXISTS smriti_tool_usage (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -502,6 +536,12 @@ const DEFAULT_AGENTS = [
     display_name: "Claude.ai",
     log_pattern: null,
     parser: "claude-web",
+  },
+  {
+    id: "team",
+    display_name: "Team Import",
+    log_pattern: null,
+    parser: "generic",
   },
 ] as const;
 
@@ -1389,14 +1429,34 @@ export function findUnsegmentedDenseSessions(
 export function findPromotableUnits(
   db: Database,
   minRetrievals: number,
-  minRelevance: number
+  minRelevance: number,
+  minEntityReach?: number
 ): StoredKnowledgeUnit[] {
+  // minEntityReach: a unit is promotable if one of its entities is
+  // independently mentioned by >= minEntityReach OTHER units — a structural
+  // reuse signal (cross-session recurrence) that doesn't depend on recall()
+  // ever having been called on this particular unit.
+  const entityReachClause = minEntityReach
+    ? `OR id IN (
+         SELECT r1.subject_id FROM smriti_relationships r1
+         JOIN smriti_relationships r2
+           ON r1.object_id = r2.object_id AND r2.predicate = 'mentions'
+          AND r1.predicate = 'mentions' AND r1.subject_id != r2.subject_id
+         WHERE r1.subject_type = 'knowledge_unit'
+         GROUP BY r1.subject_id
+         HAVING COUNT(DISTINCT r2.subject_id) >= ?
+       )`
+    : "";
+  const params = minEntityReach
+    ? [minRetrievals, minRelevance, minEntityReach]
+    : [minRetrievals, minRelevance];
+
   const rows = db
     .prepare(
       `SELECT * FROM smriti_knowledge_units
-       WHERE tier = 'segmented' AND (retrieval_count >= ? OR relevance >= ?)`
+       WHERE tier = 'segmented' AND (retrieval_count >= ? OR relevance >= ? ${entityReachClause})`
     )
-    .all(minRetrievals, minRelevance) as KnowledgeUnitRow[];
+    .all(...params) as KnowledgeUnitRow[];
   return rows.map(deserializeKnowledgeUnit);
 }
 

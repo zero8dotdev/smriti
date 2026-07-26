@@ -17,9 +17,17 @@ export type CustomCategoryDef = {
   description?: string;
 };
 
+export type CustomEntityDef = {
+  id: string;
+  label: string;
+  entity_type: string;
+  aliases: string[];
+};
+
 export type SmritiConfig = {
   version: number;
   categories?: CustomCategoryDef[];
+  entities?: CustomEntityDef[];
   allowedCategories?: string[];
   autoSync?: boolean;
 };
@@ -114,4 +122,74 @@ export function exportCustomCategories(db: Database): CustomCategoryDef[] {
       ...(r.parent_id ? { parent: r.parent_id } : {}),
       ...(r.description ? { description: r.description } : {}),
     }));
+}
+
+// =============================================================================
+// Entity Merge — team/org propagation for smriti_entities
+//
+// Same reasoning as categories: an entity's canonical id is only meaningful
+// if every teammate's machine agrees on it. .smriti/config.json is the
+// git-committed source of truth each local smriti_entities table converges
+// toward on every share/sync — the same role a published vocabulary plays
+// for literal RDF, minus the URIs.
+// =============================================================================
+
+/**
+ * Upsert entities from config into the local DB. Matches first by id, then
+ * falls back to a normalized-label match (so two machines that independently
+ * minted different ids for the same concept still converge once either
+ * syncs the shared file). Unions aliases on conflict rather than overwriting.
+ * Returns count of newly created entities.
+ */
+export function mergeEntities(db: Database, entities: CustomEntityDef[]): number {
+  if (entities.length === 0) return 0;
+
+  let created = 0;
+  for (const entity of entities) {
+    const existingById = db
+      .prepare(`SELECT id, aliases FROM smriti_entities WHERE id = ?`)
+      .get(entity.id) as { id: string; aliases: string } | null;
+
+    if (existingById) {
+      const aliases = new Set<string>(JSON.parse(existingById.aliases));
+      for (const a of entity.aliases) aliases.add(a);
+      db.prepare(`UPDATE smriti_entities SET aliases = ? WHERE id = ?`)
+        .run(JSON.stringify([...aliases]), entity.id);
+      continue;
+    }
+
+    const normalizedLabel = entity.label.trim().toLowerCase();
+    const existingByLabel = db
+      .prepare(`SELECT id, aliases FROM smriti_entities WHERE LOWER(label) = ?`)
+      .get(normalizedLabel) as { id: string; aliases: string } | null;
+
+    if (existingByLabel) {
+      const aliases = new Set<string>(JSON.parse(existingByLabel.aliases));
+      for (const a of entity.aliases) aliases.add(a);
+      db.prepare(`UPDATE smriti_entities SET aliases = ? WHERE id = ?`)
+        .run(JSON.stringify([...aliases]), existingByLabel.id);
+      continue;
+    }
+
+    db.prepare(
+      `INSERT INTO smriti_entities (id, label, entity_type, aliases, mention_count)
+       VALUES (?, ?, ?, ?, 0)`
+    ).run(entity.id, entity.label, entity.entity_type, JSON.stringify(entity.aliases));
+    created++;
+  }
+  return created;
+}
+
+/** Query smriti_entities and return as config defs for export to .smriti/config.json. */
+export function exportEntities(db: Database): CustomEntityDef[] {
+  const rows = db
+    .prepare(`SELECT id, label, entity_type, aliases FROM smriti_entities`)
+    .all() as Array<{ id: string; label: string; entity_type: string; aliases: string }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    entity_type: r.entity_type,
+    aliases: JSON.parse(r.aliases),
+  }));
 }

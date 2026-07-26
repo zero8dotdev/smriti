@@ -10,7 +10,7 @@ import { SMRITI_DIR, AUTHOR } from "../config";
 import { hashContent } from "../qmd";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { readConfig, writeConfig, exportCustomCategories } from "./config";
+import { readConfig, writeConfig, exportCustomCategories, exportEntities } from "./config";
 import {
   formatSessionAsFallback,
   isSessionWorthSharing,
@@ -178,15 +178,17 @@ async function writeManifest(
   const fullManifest = [...existingManifest, ...newEntries];
   await Bun.write(indexPath, JSON.stringify(fullManifest, null, 2));
 
-  // Write config — always update with latest custom categories
+  // Write config — always update with latest custom categories + canonical entities
   const existing = readConfig(outputDir);
   const customCategories = db ? exportCustomCategories(db) : [];
+  const entities = db ? exportEntities(db) : [];
   const config = {
     ...existing,
-    version: customCategories.length > 0 ? 2 : (existing.version ?? 1),
+    version: customCategories.length > 0 || entities.length > 0 ? 2 : (existing.version ?? 1),
     allowedCategories: existing.allowedCategories ?? ["*"],
     autoSync: existing.autoSync ?? false,
     ...(customCategories.length > 0 ? { categories: customCategories } : {}),
+    ...(entities.length > 0 ? { entities } : {}),
   };
   await writeConfig(outputDir, config);
 

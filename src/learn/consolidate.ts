@@ -29,8 +29,16 @@ import { getSessionMessages } from "../team/share";
 import { segmentSession } from "../team/segment";
 import { generateDocument, generateFrontmatter } from "../team/document";
 import { isSessionWorthSharing } from "../team/formatter";
+import { callOllama } from "../team/ollama";
 import type { RawMessage } from "../team/formatter";
 import type { KnowledgeUnit } from "../team/types";
+import {
+  resolveEntity,
+  insertRelationship,
+  getRelationships,
+  findRelatedCandidates,
+  type RelationshipPredicate,
+} from "./entities";
 
 // =============================================================================
 // Types
@@ -40,6 +48,7 @@ export type ConsolidateOptions = {
   minDensity?: number;
   minRetrievals?: number;
   minRelevance?: number;
+  minEntityReach?: number;
   model?: string;
   outputDir?: string;
   author?: string;
@@ -107,6 +116,19 @@ export async function consolidateKnowledge(
         );
         const inserted = insertKnowledgeUnit(db, unit, s.session_id, s.project_id, contentHash);
         inserted ? result.unitsStored++ : result.unitsSkipped++;
+
+        // Turn Stage 1's free-text entities into canonical "mentions" edges —
+        // pure post-processing of data already extracted, no extra LLM calls.
+        if (inserted) {
+          for (const rawEntity of unit.entities) {
+            const entityId = resolveEntity(db, rawEntity);
+            if (entityId) {
+              insertRelationship(db, "knowledge_unit", unit.id, "mentions", "entity", entityId, {
+                source: "extraction",
+              });
+            }
+          }
+        }
       }
     } catch (err: any) {
       result.errors.push(`segment ${s.session_id}: ${err.message}`);
@@ -127,7 +149,8 @@ export async function consolidateKnowledge(
   const promotable = findPromotableUnits(
     db,
     options.minRetrievals ?? 3,
-    options.minRelevance ?? 8
+    options.minRelevance ?? 8,
+    options.minEntityReach
   );
 
   for (const stored of promotable) {
@@ -143,6 +166,15 @@ export async function consolidateKnowledge(
         lineRanges: stored.line_ranges,
       };
 
+      // Bounded relationship inference: only runs if this unit shares a
+      // canonical entity with at least one other unit, and costs exactly one
+      // extra LLM call (same cost discipline as Stage 2) — persists what
+      // ollamaCheckConflicts previously only computed ephemerally.
+      const candidates = findRelatedCandidates(db, stored.id, 5);
+      if (candidates.length > 0) {
+        await inferRelationships(db, unit, candidates, options.model);
+      }
+
       const doc = await generateDocument(unit, stored.topic, {
         model: options.model,
         projectSmritiDir: outputDir,
@@ -153,10 +185,31 @@ export async function consolidateKnowledge(
       mkdirSync(categoryDir, { recursive: true });
       const filePath = join(categoryDir, doc.filename);
 
+      // Carry canonical entity ids + unit-to-unit edges into shared
+      // frontmatter. Unlike entity ids, these edges need no team-level
+      // canonicalization step — unit.id is already a portable UUID once
+      // shared (see src/team/document.ts's frontmatter `id` field), so
+      // syncTeamKnowledge can re-create them on a teammate's machine as-is.
+      const entityIds = getRelationships(db, {
+        subjectType: "knowledge_unit",
+        subjectId: stored.id,
+        predicate: "mentions",
+        objectType: "entity",
+      }).map((r) => r.object_id);
+      const outgoingEdges = getRelationships(db, {
+        subjectType: "knowledge_unit",
+        subjectId: stored.id,
+      }).filter((r) => r.predicate !== "mentions");
+
       const fm = generateFrontmatter(
         stored.session_id,
         doc.unitId,
-        { ...doc.frontmatter, pipeline: "consolidated" },
+        {
+          ...doc.frontmatter,
+          pipeline: "consolidated",
+          entity_ids: entityIds,
+          ...groupEdgesByPredicate(outgoingEdges),
+        },
         author,
         stored.project_id || undefined
       );
@@ -193,4 +246,89 @@ export async function consolidateKnowledge(
   options.onProgress?.(`promote phase: ${result.unitsPromoted} units promoted`);
 
   return result;
+}
+
+// =============================================================================
+// Relationship Inference (promote-time, LLM-gated)
+// =============================================================================
+
+const RELATION_LINE = /RELATION\s*\[(\d+)\]:\s*(relatesTo|supersedes|contradicts|none)/gi;
+const MAX_EXCERPT_CHARS = 800;
+
+// Case-insensitive regex match -> canonical camelCase predicate (avoid a blind
+// .toLowerCase() on the match, which would turn "relatesTo" into "relatesto").
+const PREDICATE_BY_LOWERCASE: Record<string, RelationshipPredicate> = {
+  relatesto: "relatesTo",
+  supersedes: "supersedes",
+  contradicts: "contradicts",
+};
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+/**
+ * Ask the LLM whether the unit being promoted relatesTo/supersedes/contradicts
+ * any of its entity-sharing candidates, and persist the answer as edges.
+ * Best-effort: a failure here (LLM down, unparseable response) is swallowed —
+ * it's enrichment on top of promotion, not a precondition for it.
+ */
+async function inferRelationships(
+  db: Database,
+  unit: KnowledgeUnit,
+  candidates: Array<{ id: string; topic: string; category: string; plain_text: string }>,
+  model?: string
+): Promise<void> {
+  try {
+    const candidateBlock = candidates
+      .map((c, i) => `[${i}] Topic: ${c.topic}\nCategory: ${c.category}\nContent: ${truncate(c.plain_text, MAX_EXCERPT_CHARS)}`)
+      .join("\n\n");
+
+    const prompt = `You are comparing a NEW knowledge unit against CANDIDATE units that already mention at least one of the same topics/entities.
+
+NEW UNIT
+Topic: ${unit.topic}
+Category: ${unit.category}
+Content: ${truncate(unit.plainText, MAX_EXCERPT_CHARS)}
+
+CANDIDATES
+${candidateBlock}
+
+For each candidate, decide the relationship of the NEW unit to it:
+- relatesTo: related but neither replaces nor conflicts with the other
+- supersedes: the NEW unit replaces/updates the candidate's guidance
+- contradicts: the NEW unit conflicts with the candidate
+- none: no meaningful relationship
+
+Respond with exactly one line per candidate, in this format:
+RELATION [i]: relatesTo|supersedes|contradicts|none`;
+
+    const response = await callOllama(prompt, { model });
+
+    for (const match of response.matchAll(RELATION_LINE)) {
+      const index = Number(match[1]);
+      const raw = match[2].toLowerCase();
+      if (raw === "none") continue;
+      const predicate = PREDICATE_BY_LOWERCASE[raw];
+      const candidate = candidates[index];
+      if (!predicate || !candidate) continue;
+
+      insertRelationship(db, "knowledge_unit", unit.id, predicate, "knowledge_unit", candidate.id, {
+        source: "llm",
+      });
+    }
+  } catch {
+    // Enrichment only — never block promotion on a failed/unparseable relation call.
+  }
+}
+
+/** Group outgoing relationship edges by predicate into frontmatter-ready arrays of object unit ids. */
+function groupEdgesByPredicate(
+  edges: Array<{ predicate: string; object_id: string }>
+): Record<string, string[]> {
+  const grouped: Record<string, string[]> = {};
+  for (const edge of edges) {
+    (grouped[edge.predicate] ??= []).push(edge.object_id);
+  }
+  return grouped;
 }
