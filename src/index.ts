@@ -7,7 +7,7 @@
  * schema-based categorization, and team knowledge sharing.
  */
 
-import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, getTagUsage, computeDensityScore, updateDensityScore, insertSessionQueries, getUnenrichedSessionIds, listKnowledgeUnits, forgetSession } from "./db";
+import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, type ProjectInspectReport, getTagUsage, type TagUsageEntry, computeDensityScore, updateDensityScore, insertSessionQueries, getUnenrichedSessionIds, listKnowledgeUnits, forgetSession } from "./db";
 import { getMessages, getSession, getMemoryStatus, embedMemoryMessages } from "./qmd";
 import { ingest, ingestAll } from "./ingest/index";
 import { categorizeUncategorized } from "./categorize/classifier";
