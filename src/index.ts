@@ -7,7 +7,7 @@
  * schema-based categorization, and team knowledge sharing.
  */
 
-import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, getTagUsage, computeDensityScore, updateDensityScore, insertSessionQueries, getUnenrichedSessionIds } from "./db";
+import { initSmriti, closeDb, getCategories, getCategoryTree, addCategory, listProjects, tagSession, getProjectReport, type ProjectInspectReport, getTagUsage, type TagUsageEntry, computeDensityScore, updateDensityScore, insertSessionQueries, getUnenrichedSessionIds, listKnowledgeUnits, forgetSession } from "./db";
 import { getMessages, getSession, getMemoryStatus, embedMemoryMessages } from "./qmd";
 import { ingest, ingestAll } from "./ingest/index";
 import { categorizeUncategorized } from "./categorize/classifier";
@@ -16,6 +16,8 @@ import { searchFiltered, listSessions } from "./search/index";
 import { recall } from "./search/recall";
 import { shareKnowledge } from "./team/share";
 import { syncTeamKnowledge, listTeamContributions } from "./team/sync";
+import { consolidateKnowledge } from "./learn/consolidate";
+import { findEntity, getUnitsForEntity, getRelationships } from "./learn/entities";
 import {
   generateContext,
   compareSessions,
@@ -53,6 +55,9 @@ import {
   formatTagUsage,
   formatDensityBreakdown,
   formatDigest,
+  formatConsolidateResult,
+  formatLearnings,
+  formatEntityGraph,
   json,
 } from "./format";
 import { generateDigest } from "./digest";
@@ -206,6 +211,8 @@ Commands:
   recall <query> [options]     Smart recall with optional synthesis
   categorize [options]         Auto-categorize sessions
   tag <session-id> <category>  Manually tag a session
+  forget <session-id> [opts]   Delete a session (soft by default; --hard --yes for real deletion)
+  forget --all [filters]       Bulk forget, reusing list's --project/--category/--agent filters
   categories                   List category tree
   categories add <id> [opts]   Add a custom category
   tags [options]               Show tag usage in sessions
@@ -213,6 +220,9 @@ Commands:
   compare <a> <b>              Compare two sessions (tokens, tools, files)
   compare --last               Compare last 2 sessions for current project
   share [filters]              Export knowledge to .smriti/
+  consolidate [options]        Segment dense sessions, promote reused units, prune stale/superseded ones
+  learnings [options]          List extracted knowledge units (tier, retrievals, relevance)
+  graph <entity>               Show a canonical entity's mentions and relationship edges
   sync                         Import team knowledge from .smriti/
   team                         View team contributions
   list [filters]               List sessions
@@ -237,6 +247,12 @@ Filters (apply to search, recall, list, share):
   --project <id>               Filter by project
   --agent <id>                 Filter by agent
   --limit <n>                  Max results (default varies by command)
+
+Forget options:
+  --hard                        Permanently delete instead of soft delete (requires --yes)
+  --yes                         Confirm --hard (required — no confirmation prompt otherwise)
+  --purge-shared                With --hard, also delete canonical (promoted) units, their
+                                 smriti_shares row, and their .smriti/knowledge/*.md doc
 
 Ingest options:
   smriti ingest claude         Ingest Claude Code sessions
@@ -280,6 +296,11 @@ Share options:
   --segmented                  Use 3-stage segmentation pipeline (beta)
   --min-relevance <float>      Relevance threshold for segmented mode (default: 6)
 
+Consolidate options:
+  --prune                      Also run the prune phase (dry-run by default — prints candidates, deletes nothing)
+  --yes, --apply                Actually delete/archive prune candidates (requires --prune)
+  --prune-stale-days <n>        Age threshold for stale segmented units (default: 30)
+
 Insights options:
   smriti insights                          Full dashboard
   smriti insights session <id>             Session deep dive
@@ -302,6 +323,9 @@ Examples:
   smriti search "auth" --project myapp
   smriti recall "how did we set up auth" --synthesize
   smriti categorize
+  smriti consolidate
+  smriti consolidate --prune
+  smriti consolidate --prune --yes
   smriti list --category decision --project myapp
   smriti share --category decision
   smriti sync
@@ -643,6 +667,61 @@ async function main() {
       }
 
       // =====================================================================
+      // FORGET
+      // =====================================================================
+      case "forget": {
+        const all = hasFlag(args, "--all");
+        const sessionId = getPositional(args, 1);
+        if (!sessionId && !all) {
+          console.error("Usage: smriti forget <session-id> [--hard] [--yes] [--purge-shared]");
+          console.error("       smriti forget --all [--project <id>] [--category <id>] [--agent <id>] [--hard] [--yes] [--purge-shared]");
+          process.exit(1);
+        }
+
+        const hard = hasFlag(args, "--hard");
+        const purgeShared = hasFlag(args, "--purge-shared");
+        if (hard && !hasFlag(args, "--yes")) {
+          console.error("--hard permanently deletes session data. Re-run with --yes to confirm.");
+          process.exit(1);
+        }
+
+        const targetIds = all
+          ? listSessions(db, {
+              project: getArg(args, "--project"),
+              category: getArg(args, "--category"),
+              agent: getArg(args, "--agent"),
+              includeInactive: true,
+            }).map((s) => s.id)
+          : [sessionId!];
+
+        if (targetIds.length === 0) {
+          console.log("No matching sessions to forget.");
+          break;
+        }
+
+        let deleted = 0;
+        let purged = 0;
+        let kept = 0;
+        for (const id of targetIds) {
+          const r = forgetSession(db, id, { hard, purgeShared });
+          deleted += r.unitsDeleted;
+          purged += r.unitsPurged;
+          kept += r.canonicalKept;
+        }
+
+        console.log(`Forgot ${targetIds.length} session(s) (${hard ? "hard delete" : "soft delete"}).`);
+        if (hard) {
+          console.log(`  Unpromoted knowledge units removed: ${deleted}`);
+          if (purgeShared) {
+            console.log(`  Canonical knowledge units purged: ${purged}`);
+          } else if (kept > 0) {
+            console.log(`  Canonical knowledge units kept (already shared — pass --purge-shared to also remove): ${kept}`);
+          }
+        }
+        break;
+      }
+
+      // =====================================================================
       // CATEGORIES
       // =====================================================================
       case "categories": {
@@ -809,6 +888,82 @@ async function main() {
         });
 
         console.log(formatShareResult(result));
+        break;
+      }
+
+      // =====================================================================
+      // CONSOLIDATE
+      // =====================================================================
+      case "consolidate": {
+        const prune = hasFlag(args, "--prune");
+        const pruneApply = hasFlag(args, "--yes") || hasFlag(args, "--apply");
+        const result = await consolidateKnowledge(db, {
+          minDensity: Number(getArg(args, "--min-density")) || undefined,
+          minRetrievals: Number(getArg(args, "--min-retrievals")) || undefined,
+          minRelevance: Number(getArg(args, "--min-relevance")) || undefined,
+          minEntityReach: Number(getArg(args, "--min-entity-reach")) || undefined,
+          model: getArg(args, "--model"),
+          outputDir: getArg(args, "--output"),
+          sessionLimit: Number(getArg(args, "--session-limit")) || undefined,
+          prune,
+          pruneStaleDays: Number(getArg(args, "--prune-stale-days")) || undefined,
+          pruneApply,
+          onProgress: (msg) => console.log(`  ${msg}`),
+        });
+
+        console.log(formatConsolidateResult(result));
+        if (prune && !pruneApply && result.pruneCandidates && result.pruneCandidates.length > 0) {
+          console.log("\nRun again with --prune --yes to apply.");
+        }
+        break;
+      }
+
+      // =====================================================================
+      // LEARNINGS
+      // =====================================================================
+      case "learnings": {
+        const units = listKnowledgeUnits(db, {
+          tier: getArg(args, "--tier") as "segmented" | "canonical" | undefined,
+          minRetrievals: Number(getArg(args, "--min-retrievals")) || undefined,
+          limit: Number(getArg(args, "--limit")) || 50,
+        });
+
+        if (hasFlag(args, "--json")) {
+          console.log(json(units));
+        } else {
+          console.log(formatLearnings(units));
+        }
+        break;
+      }
+
+      // =====================================================================
+      // GRAPH
+      // =====================================================================
+      case "graph": {
+        const query = getPositional(args, 1);
+        if (!query) {
+          console.error("Usage: smriti graph <entity>");
+          process.exit(1);
+        }
+
+        const entity = findEntity(db, query);
+        if (!entity) {
+          console.log(`No entity found matching "${query}".`);
+          break;
+        }
+
+        const units = getUnitsForEntity(db, entity.id);
+        const unitIds = new Set(units.map((u) => u.id));
+        const edges = units.flatMap((u) =>
+          getRelationships(db, { subjectType: "knowledge_unit", subjectId: u.id })
+            .filter((r) => r.predicate !== "mentions" && unitIds.has(r.object_id))
+        );
+
+        if (hasFlag(args, "--json")) {
+          console.log(json({ entity, units, edges }));
+        } else {
+          console.log(formatEntityGraph(entity, units, edges));
+        }
         break;
       }
 

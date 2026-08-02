@@ -9,7 +9,8 @@ import type { Database } from "bun:sqlite";
 import { SMRITI_DIR } from "../config";
 import { addMessage, hashContent } from "../qmd";
 import { join } from "path";
-import { readConfig, mergeCategories } from "./config";
+import { readConfig, mergeCategories, mergeEntities } from "./config";
+import { insertRelationship, type RelationshipPredicate } from "../learn/entities";
 
 // =============================================================================
 // Types
@@ -26,6 +27,7 @@ export type SyncResult = {
   skipped: number;
   errors: string[];
   categoriesImported: number;
+  entitiesImported: number;
 };
 
 // =============================================================================
@@ -116,6 +118,7 @@ export async function syncTeamKnowledge(
     skipped: 0,
     errors: [],
     categoriesImported: 0,
+    entitiesImported: 0,
   };
 
   // Determine input directory
@@ -144,10 +147,15 @@ export async function syncTeamKnowledge(
     ).map((r) => r.content_hash)
   );
 
-  // Import custom categories from config.json (v2+) before scanning files
+  // Import custom categories + canonical entities from config.json (v2+)
+  // before scanning files — entities must exist locally before per-file
+  // "mentions"/relationship edges below can reference them.
   const config = readConfig(inputDir);
   if (config.categories && config.categories.length > 0) {
     result.categoriesImported = mergeCategories(db, config.categories);
+  }
+  if (config.entities && config.entities.length > 0) {
+    result.entitiesImported = mergeEntities(db, config.entities);
   }
 
   // Scan for markdown files
@@ -175,10 +183,11 @@ export async function syncTeamKnowledge(
           continue;
         }
 
-        // Segmented pipeline docs don't have **user**/**assistant** patterns;
-        // treat the whole body as a single assistant message.
-        const isSegmented = meta.pipeline === "segmented";
-        const messages = isSegmented
+        // Segmented and consolidated pipeline docs don't have
+        // **user**/**assistant** patterns; treat the whole body as a single
+        // assistant message.
+        const isSingleMessageDoc = meta.pipeline === "segmented" || meta.pipeline === "consolidated";
+        const messages = isSingleMessageDoc
           ? [{ role: "assistant", content: body.trim() }]
           : extractMessages(body);
 
@@ -241,6 +250,28 @@ export async function syncTeamKnowledge(
           metaStr(meta.author) || "team",
           contentHash
         );
+
+        // Re-create relationship edges from frontmatter. Unlike entities,
+        // these need no canonicalization: unit ids are portable UUIDs
+        // already shared as `sessionId` above, so edges reference the same
+        // node on every machine that imports this file.
+        const asArray = (v: string | string[] | undefined): string[] =>
+          v === undefined ? [] : Array.isArray(v) ? v : [v];
+
+        for (const entityId of asArray(meta.entity_ids)) {
+          if (!entityId) continue;
+          insertRelationship(db, "knowledge_unit", sessionId, "mentions", "entity", entityId, {
+            source: "extraction",
+          });
+        }
+        for (const predicate of ["relatesTo", "supersedes", "contradicts"] as RelationshipPredicate[]) {
+          for (const objectId of asArray(meta[predicate])) {
+            if (!objectId) continue;
+            insertRelationship(db, "knowledge_unit", sessionId, predicate, "knowledge_unit", objectId, {
+              source: "llm",
+            });
+          }
+        }
 
         result.imported++;
       } catch (err: any) {

@@ -257,6 +257,44 @@ export function clearAllSessions(db: Database, hard: boolean = false): number {
   }
 }
 
+/**
+ * Remove content_vectors/vectors_vec rows whose hash is no longer referenced
+ * by any memory message or active QMD document. Scoped deletion — unlike
+ * QMD's own cleanupOrphanedVectors (which only checks `documents` and would
+ * wipe every memory-message embedding, since messages aren't rows in
+ * `documents`). Called after a hard session delete; a no-op (returns 0) when
+ * the vector/document tables aren't present (e.g. sqlite-vec unavailable, or
+ * a minimal test schema that skipped createStore()).
+ */
+export function cleanupOrphanedMemoryVectors(db: Database): number {
+  try {
+    db.prepare(`SELECT 1 FROM vectors_vec LIMIT 0`).get();
+    db.prepare(`SELECT 1 FROM documents LIMIT 0`).get();
+    db.prepare(`SELECT 1 FROM content_vectors LIMIT 0`).get();
+  } catch {
+    return 0;
+  }
+
+  const orphanWhere = `
+    NOT EXISTS (SELECT 1 FROM memory_messages m WHERE m.hash = content_vectors.hash)
+    AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.hash = content_vectors.hash AND d.active = 1)
+  `;
+
+  const { c } = db
+    .prepare(`SELECT COUNT(*) as c FROM content_vectors WHERE ${orphanWhere}`)
+    .get() as { c: number };
+  if (c === 0) return 0;
+
+  db.exec(`
+    DELETE FROM vectors_vec WHERE hash_seq IN (
+      SELECT content_vectors.hash || '_' || content_vectors.seq FROM content_vectors WHERE ${orphanWhere}
+    )
+  `);
+  db.exec(`DELETE FROM content_vectors WHERE ${orphanWhere}`);
+
+  return c;
+}
+
 // =============================================================================
 // Message CRUD
 // =============================================================================
@@ -828,23 +866,31 @@ export async function recallMemories(
     }
   }
 
-  // Blend density scores into recall scores — dense sessions rank higher
+  // Blend density scores into recall scores — dense sessions rank higher.
+  // smriti_session_meta is a Smriti-layer table, not a QMD core one — this
+  // file is meant to stay usable against a bare QMD store (e.g.
+  // scripts/bench-qmd.ts), so a missing table degrades gracefully instead
+  // of throwing, same as the vector-search fallback above.
   if (dedupedResults.length > 0) {
-    const sessionIds = dedupedResults.map((r) => r.session_id);
-    const placeholders = sessionIds.map(() => "?").join(",");
-    const densityRows = (db as any)
-      .prepare(
-        `SELECT session_id, COALESCE(density_score, 0) as density_score
-         FROM smriti_session_meta WHERE session_id IN (${placeholders})`
-      )
-      .all(...sessionIds) as { session_id: string; density_score: number }[];
-    const densityMap = new Map(densityRows.map((r) => [r.session_id, r.density_score]));
+    try {
+      const sessionIds = dedupedResults.map((r) => r.session_id);
+      const placeholders = sessionIds.map(() => "?").join(",");
+      const densityRows = (db as any)
+        .prepare(
+          `SELECT session_id, COALESCE(density_score, 0) as density_score
+           FROM smriti_session_meta WHERE session_id IN (${placeholders})`
+        )
+        .all(...sessionIds) as { session_id: string; density_score: number }[];
+      const densityMap = new Map(densityRows.map((r) => [r.session_id, r.density_score]));
 
-    for (const r of dedupedResults) {
-      const ds = densityMap.get(r.session_id) ?? 0;
-      r.score = r.score * 0.8 + ds * 0.2;
+      for (const r of dedupedResults) {
+        const ds = densityMap.get(r.session_id) ?? 0;
+        r.score = r.score * 0.8 + ds * 0.2;
+      }
+      dedupedResults.sort((a, b) => b.score - a.score);
+    } catch {
+      // smriti_session_meta doesn't exist (bare QMD store) — skip blending.
     }
-    dedupedResults.sort((a, b) => b.score - a.score);
   }
 
   const results = dedupedResults.slice(0, limit);

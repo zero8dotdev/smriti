@@ -269,6 +269,123 @@ export function formatShareResult(result: {
 }
 
 // =============================================================================
+// Consolidate Result Formatting
+// =============================================================================
+
+export function formatConsolidateResult(result: {
+  sessionsSegmented: number;
+  unitsStored: number;
+  unitsSkipped: number;
+  unitsPromoted: number;
+  unitsPruned?: number;
+  unitsArchived?: number;
+  pruneCandidates?: Array<{ id: string; topic: string; tier: string; action: string; reason: string }>;
+  errors: string[];
+}): string {
+  const lines = [
+    `Sessions segmented: ${result.sessionsSegmented}`,
+    `Units stored: ${result.unitsStored}`,
+    `Units skipped (dedup): ${result.unitsSkipped}`,
+    `Units promoted: ${result.unitsPromoted}`,
+  ];
+
+  if (result.pruneCandidates && result.pruneCandidates.length > 0) {
+    lines.push("");
+    lines.push(`Prune candidates (dry-run — rerun with --yes to apply):`);
+    lines.push(
+      table(
+        ["Topic", "Tier", "Action", "Reason"],
+        result.pruneCandidates.map((c) => [c.topic, c.tier, c.action, c.reason])
+      )
+    );
+  } else if (result.unitsPruned !== undefined || result.unitsArchived !== undefined) {
+    lines.push(`Units pruned (deleted): ${result.unitsPruned ?? 0}`);
+    lines.push(`Units archived (superseded): ${result.unitsArchived ?? 0}`);
+  }
+
+  if (result.errors.length > 0) {
+    lines.push(`Errors: ${result.errors.length}`);
+    for (const err of result.errors.slice(0, 5)) {
+      lines.push(`  - ${err}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Knowledge Units (Learnings) Formatting
+// =============================================================================
+
+export function formatLearnings(
+  units: Array<{
+    tier: string;
+    topic: string;
+    category: string;
+    retrieval_count: number;
+    relevance: number;
+    canonical_doc_path: string | null;
+  }>
+): string {
+  if (units.length === 0) return "No knowledge units found.";
+
+  const headers = ["Tier", "Topic", "Category", "Retrievals", "Relevance", "Doc Path"];
+  const rows = units.map((u) => [
+    u.tier === "canonical" ? "✓ canonical" : "segmented",
+    u.topic,
+    u.category,
+    String(u.retrieval_count),
+    u.relevance.toFixed(1),
+    u.canonical_doc_path || "-",
+  ]);
+
+  return table(headers, rows, [14, 40, 20, 10, 9, 40]);
+}
+
+// =============================================================================
+// Entity Graph Formatting (smriti graph <entity>)
+// =============================================================================
+
+export function formatEntityGraph(
+  entity: { id: string; label: string; entity_type: string; aliases: string[]; mention_count: number },
+  units: Array<{ id: string; topic: string; category: string; relevance: number; tier: string; retrieval_count: number }>,
+  edges: Array<{ subject_id: string; predicate: string; object_id: string }>
+): string {
+  const lines = [
+    `Entity: ${entity.label} (${entity.id})`,
+    `Type: ${entity.entity_type}`,
+    `Aliases: ${entity.aliases.join(", ") || "-"}`,
+    `Mentioned ${entity.mention_count} time(s) across ${units.length} unit(s)`,
+    "",
+  ];
+
+  if (units.length === 0) {
+    lines.push("No knowledge units mention this entity yet.");
+    return lines.join("\n");
+  }
+
+  const headers = ["Tier", "Topic", "Category", "Retrievals", "Relevance"];
+  const rows = units.map((u) => [
+    u.tier === "canonical" ? "✓ canonical" : "segmented",
+    u.topic,
+    u.category,
+    String(u.retrieval_count),
+    u.relevance.toFixed(1),
+  ]);
+  lines.push(table(headers, rows, [14, 40, 20, 10, 9]));
+
+  const nonMentionEdges = edges.filter((e) => e.predicate !== "mentions");
+  if (nonMentionEdges.length > 0) {
+    lines.push("", "Relationships between these units:");
+    for (const e of nonMentionEdges) {
+      lines.push(`  ${e.subject_id} --${e.predicate}--> ${e.object_id}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
 // Sync Result Formatting
 // =============================================================================
 
@@ -278,6 +395,7 @@ export function formatSyncResult(result: {
   skipped: number;
   errors: string[];
   categoriesImported?: number;
+  entitiesImported?: number;
 }): string {
   const lines = [
     `Files processed: ${result.filesProcessed}`,
@@ -286,6 +404,9 @@ export function formatSyncResult(result: {
   ];
   if (result.categoriesImported && result.categoriesImported > 0) {
     lines.push(`Categories imported: ${result.categoriesImported}`);
+  }
+  if (result.entitiesImported && result.entitiesImported > 0) {
+    lines.push(`Entities imported: ${result.entitiesImported}`);
   }
 
   if (result.errors.length > 0) {

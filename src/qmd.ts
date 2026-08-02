@@ -17,6 +17,9 @@ export {
   importTranscript,
   initializeMemoryTables,
   createSession,
+  deleteSession,
+  clearAllSessions,
+  cleanupOrphanedMemoryVectors,
 } from "./memory";
 
 export { hashContent } from "../qmd/src/store";
