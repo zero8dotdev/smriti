@@ -63,21 +63,49 @@ function seedSession(sessionId: string, projectId: string, messages: Array<{ rol
   upsertSessionMeta(db, sessionId, "claude-code", projectId);
 }
 
-function mockOllamaFetch(handlers: { stage1?: () => object; relation?: () => string; stage2?: () => string }) {
+type RelationGuessLite = { index: number; predicate: string };
+
+/**
+ * Stage 1 (segmentSession) and Stage 2 (generateDocument) go through
+ * callOllama's /api/generate, with a `prompt` field on the request body.
+ * Promote-time relationship inference (classifyRelationshipsToolCall) goes
+ * through ollamaChat's /api/chat instead — no `prompt` field, a `messages`
+ * array plus a native tool call in the response instead of free text.
+ */
+function mockOllamaFetch(handlers: { stage1?: () => object; relation?: () => RelationGuessLite[]; stage2?: () => string }) {
   return mock(async (_url: string, init: any) => {
     const body = JSON.parse(init.body);
-    const prompt = body.prompt as string;
-    if (prompt.includes("Knowledge Unit Segmentation")) {
+
+    if (typeof body.prompt === "string") {
+      if (body.prompt.includes("Knowledge Unit Segmentation")) {
+        return new Response(
+          JSON.stringify({ response: "```json\n" + JSON.stringify((handlers.stage1 ?? (() => ({ units: [] })))()) + "\n```" }),
+          { status: 200 }
+        );
+      }
       return new Response(
-        JSON.stringify({ response: "```json\n" + JSON.stringify((handlers.stage1 ?? (() => ({ units: [] })))()) + "\n```" }),
+        JSON.stringify({ response: (handlers.stage2 ?? (() => "# Doc\n\nContent."))() }),
         { status: 200 }
       );
     }
-    if (prompt.includes("CANDIDATES")) {
-      return new Response(JSON.stringify({ response: (handlers.relation ?? (() => ""))() }), { status: 200 });
-    }
+
     return new Response(
-      JSON.stringify({ response: (handlers.stage2 ?? (() => "# Doc\n\nContent."))() }),
+      JSON.stringify({
+        model: "test-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              function: {
+                name: "record_relationships",
+                arguments: { relationships: (handlers.relation ?? (() => []))() },
+              },
+            },
+          ],
+        },
+        done: true,
+      }),
       { status: 200 }
     );
   });
@@ -263,7 +291,7 @@ test("promote phase persists LLM-inferred relatesTo/supersedes/contradicts edges
   insertRelationship(db, "knowledge_unit", "infer-new", "mentions", "entity", redisId);
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = mockOllamaFetch({ relation: () => "RELATION [0]: supersedes" }) as any;
+  globalThis.fetch = mockOllamaFetch({ relation: () => [{ index: 0, predicate: "supersedes" }] }) as any;
 
   try {
     const result = await consolidateKnowledge(db, {
@@ -308,7 +336,7 @@ test("promote phase never asserts a directional predicate in both directions for
   // Always answers "supersedes" regardless of which side is asking — the
   // worst case for this bug, and realistic for a small/local model given a
   // prompt with no explicit recency signal.
-  globalThis.fetch = mockOllamaFetch({ relation: () => "RELATION [0]: supersedes" }) as any;
+  globalThis.fetch = mockOllamaFetch({ relation: () => [{ index: 0, predicate: "supersedes" }] }) as any;
 
   try {
     const result = await consolidateKnowledge(db, {
