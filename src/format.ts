@@ -269,6 +269,123 @@ export function formatShareResult(result: {
 }
 
 // =============================================================================
+// Consolidate Result Formatting
+// =============================================================================
+
+export function formatConsolidateResult(result: {
+  sessionsSegmented: number;
+  unitsStored: number;
+  unitsSkipped: number;
+  unitsPromoted: number;
+  unitsPruned?: number;
+  unitsArchived?: number;
+  pruneCandidates?: Array<{ id: string; topic: string; tier: string; action: string; reason: string }>;
+  errors: string[];
+}): string {
+  const lines = [
+    `Sessions segmented: ${result.sessionsSegmented}`,
+    `Units stored: ${result.unitsStored}`,
+    `Units skipped (dedup): ${result.unitsSkipped}`,
+    `Units promoted: ${result.unitsPromoted}`,
+  ];
+
+  if (result.pruneCandidates && result.pruneCandidates.length > 0) {
+    lines.push("");
+    lines.push(`Prune candidates (dry-run — rerun with --yes to apply):`);
+    lines.push(
+      table(
+        ["Topic", "Tier", "Action", "Reason"],
+        result.pruneCandidates.map((c) => [c.topic, c.tier, c.action, c.reason])
+      )
+    );
+  } else if (result.unitsPruned !== undefined || result.unitsArchived !== undefined) {
+    lines.push(`Units pruned (deleted): ${result.unitsPruned ?? 0}`);
+    lines.push(`Units archived (superseded): ${result.unitsArchived ?? 0}`);
+  }
+
+  if (result.errors.length > 0) {
+    lines.push(`Errors: ${result.errors.length}`);
+    for (const err of result.errors.slice(0, 5)) {
+      lines.push(`  - ${err}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Knowledge Units (Learnings) Formatting
+// =============================================================================
+
+export function formatLearnings(
+  units: Array<{
+    tier: string;
+    topic: string;
+    category: string;
+    retrieval_count: number;
+    relevance: number;
+    canonical_doc_path: string | null;
+  }>
+): string {
+  if (units.length === 0) return "No knowledge units found.";
+
+  const headers = ["Tier", "Topic", "Category", "Retrievals", "Relevance", "Doc Path"];
+  const rows = units.map((u) => [
+    u.tier === "canonical" ? "✓ canonical" : "segmented",
+    u.topic,
+    u.category,
+    String(u.retrieval_count),
+    u.relevance.toFixed(1),
+    u.canonical_doc_path || "-",
+  ]);
+
+  return table(headers, rows, [14, 40, 20, 10, 9, 40]);
+}
+
+// =============================================================================
+// Entity Graph Formatting (smriti graph <entity>)
+// =============================================================================
+
+export function formatEntityGraph(
+  entity: { id: string; label: string; entity_type: string; aliases: string[]; mention_count: number },
+  units: Array<{ id: string; topic: string; category: string; relevance: number; tier: string; retrieval_count: number }>,
+  edges: Array<{ subject_id: string; predicate: string; object_id: string }>
+): string {
+  const lines = [
+    `Entity: ${entity.label} (${entity.id})`,
+    `Type: ${entity.entity_type}`,
+    `Aliases: ${entity.aliases.join(", ") || "-"}`,
+    `Mentioned ${entity.mention_count} time(s) across ${units.length} unit(s)`,
+    "",
+  ];
+
+  if (units.length === 0) {
+    lines.push("No knowledge units mention this entity yet.");
+    return lines.join("\n");
+  }
+
+  const headers = ["Tier", "Topic", "Category", "Retrievals", "Relevance"];
+  const rows = units.map((u) => [
+    u.tier === "canonical" ? "✓ canonical" : "segmented",
+    u.topic,
+    u.category,
+    String(u.retrieval_count),
+    u.relevance.toFixed(1),
+  ]);
+  lines.push(table(headers, rows, [14, 40, 20, 10, 9]));
+
+  const nonMentionEdges = edges.filter((e) => e.predicate !== "mentions");
+  if (nonMentionEdges.length > 0) {
+    lines.push("", "Relationships between these units:");
+    for (const e of nonMentionEdges) {
+      lines.push(`  ${e.subject_id} --${e.predicate}--> ${e.object_id}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
 // Sync Result Formatting
 // =============================================================================
 
@@ -277,12 +394,20 @@ export function formatSyncResult(result: {
   imported: number;
   skipped: number;
   errors: string[];
+  categoriesImported?: number;
+  entitiesImported?: number;
 }): string {
   const lines = [
     `Files processed: ${result.filesProcessed}`,
     `Imported: ${result.imported}`,
     `Skipped: ${result.skipped}`,
   ];
+  if (result.categoriesImported && result.categoriesImported > 0) {
+    lines.push(`Categories imported: ${result.categoriesImported}`);
+  }
+  if (result.entitiesImported && result.entitiesImported > 0) {
+    lines.push(`Entities imported: ${result.entitiesImported}`);
+  }
 
   if (result.errors.length > 0) {
     lines.push(`Errors: ${result.errors.length}`);
@@ -369,6 +494,125 @@ export function formatProjectReport(
         lines.push(`  ${sess.id.slice(0, 8)}  ${sess.title || "(untitled)"}${cats}`);
         lines.push(`             ${sess.updated_at.slice(0, 16)}  ${sess.agent_id || "-"}`);
       }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Density Breakdown Formatting
+// =============================================================================
+
+export function formatDensityBreakdown(breakdown: {
+  toolCalls: number;
+  fileWrites: number;
+  gitOps: number;
+  decisionTags: number;
+  errors: number;
+  totalTokens: number;
+  score: number;
+}): string {
+  const bar = (value: number, max: number, width: number = 20): string => {
+    const filled = Math.round(Math.min(value / max, 1) * width);
+    return "[" + "=".repeat(filled) + " ".repeat(width - filled) + "]";
+  };
+
+  return [
+    `Density Score: ${(breakdown.score * 100).toFixed(1)}%`,
+    "",
+    `  Tool calls    ${bar(breakdown.toolCalls, 50)}  ${breakdown.toolCalls} (cap 50)`,
+    `  File writes   ${bar(breakdown.fileWrites, 20)}  ${breakdown.fileWrites} (cap 20)`,
+    `  Git ops       ${bar(breakdown.gitOps, 10)}  ${breakdown.gitOps} (cap 10)`,
+    `  Decisions     ${bar(breakdown.decisionTags, 3)}  ${breakdown.decisionTags} (cap 3)`,
+    `  Errors        ${bar(breakdown.errors, 10)}  ${breakdown.errors} (cap 10)`,
+    `  Tokens        ${bar(breakdown.totalTokens, 200_000)}  ${breakdown.totalTokens.toLocaleString()} (cap 200k)`,
+  ].join("\n");
+}
+
+// =============================================================================
+// Digest Formatting
+// =============================================================================
+
+export function formatDigest(report: {
+  period: { from: string; to: string; days: number };
+  totalSessions: number;
+  totalMessages: number;
+  totalTokens: number;
+  estimatedCost: number;
+  byProject: Array<{
+    projectId: string | null;
+    sessionCount: number;
+    totalTokens: number;
+    estimatedCost: number;
+    filesChanged: number;
+    gitOps: number;
+    errorCount: number;
+    topTools: Array<{ toolName: string; count: number }>;
+    sessions: Array<{
+      id: string;
+      title: string;
+      updatedAt: string;
+      toolCount: number;
+      fileCount: number;
+      gitCount: number;
+      errorCount: number;
+      densityScore: number;
+    }>;
+  }>;
+  topErrors: Array<{ message: string; count: number }>;
+  synthesis?: string;
+}): string {
+  const lines: string[] = [];
+
+  const fromDate = report.period.from.slice(0, 10);
+  const toDate = report.period.to.slice(0, 10);
+  lines.push(`Digest: ${fromDate} → ${toDate} (${report.period.days}d)`);
+  lines.push("");
+  lines.push(`Sessions:  ${report.totalSessions}`);
+  lines.push(`Messages:  ${report.totalMessages.toLocaleString()}`);
+  lines.push(`Tokens:    ${report.totalTokens.toLocaleString()}`);
+  lines.push(`Est. Cost: $${report.estimatedCost.toFixed(4)}`);
+
+  if (report.synthesis) {
+    lines.push("");
+    lines.push("Summary:");
+    for (const line of report.synthesis.split("\n")) {
+      lines.push(`  ${line}`);
+    }
+  }
+
+  for (const proj of report.byProject) {
+    lines.push("");
+    lines.push(`Project: ${proj.projectId ?? "(no project)"}`);
+    lines.push(
+      `  ${proj.sessionCount} session${proj.sessionCount === 1 ? "" : "s"}  |  ` +
+      `${proj.filesChanged} file${proj.filesChanged === 1 ? "" : "s"}  |  ` +
+      `${proj.gitOps} git op${proj.gitOps === 1 ? "" : "s"}  |  ` +
+      `${proj.errorCount} error${proj.errorCount === 1 ? "" : "s"}  |  ` +
+      `$${proj.estimatedCost.toFixed(4)}`
+    );
+
+    if (proj.topTools.length > 0) {
+      const toolStr = proj.topTools.map((t) => `${t.toolName}(${t.count})`).join(" ");
+      lines.push(`  Tools: ${toolStr}`);
+    }
+
+    for (const s of proj.sessions) {
+      const density = `${(s.densityScore * 100).toFixed(0)}%`;
+      const date = s.updatedAt.slice(0, 10);
+      lines.push(
+        `  ${s.id.slice(0, 8)}  ${pad(s.title, 40)}  density:${density}  ${date}`
+      );
+    }
+  }
+
+  if (report.topErrors.length > 0) {
+    lines.push("");
+    lines.push("Top Errors:");
+    for (const e of report.topErrors) {
+      const snippet = e.message?.slice(0, 80) || "(empty)";
+      lines.push(`  x${e.count}  ${snippet}`);
     }
   }
 

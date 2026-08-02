@@ -9,6 +9,8 @@ import type { Database } from "bun:sqlite";
 import { SMRITI_DIR } from "../config";
 import { addMessage, hashContent } from "../qmd";
 import { join } from "path";
+import { readConfig, mergeCategories, mergeEntities } from "./config";
+import { insertRelationship, type RelationshipPredicate } from "../learn/entities";
 
 // =============================================================================
 // Types
@@ -24,6 +26,8 @@ export type SyncResult = {
   imported: number;
   skipped: number;
   errors: string[];
+  categoriesImported: number;
+  entitiesImported: number;
 };
 
 // =============================================================================
@@ -32,22 +36,27 @@ export type SyncResult = {
 
 /** Parse YAML frontmatter from a markdown file */
 export function parseFrontmatter(content: string): {
-  meta: Record<string, string>;
+  meta: Record<string, string | string[]>;
   body: string;
 } {
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return { meta: {}, body: content };
 
-  const meta: Record<string, string> = {};
+  const meta: Record<string, string | string[]> = {};
   for (const line of match[1].split("\n")) {
     const colonIdx = line.indexOf(":");
     if (colonIdx > 0) {
       const key = line.slice(0, colonIdx).trim();
-      const value = line
-        .slice(colonIdx + 1)
-        .trim()
-        .replace(/^["']|["']$/g, "");
-      meta[key] = value;
+      const raw = line.slice(colonIdx + 1).trim();
+      if (raw.startsWith("[") && raw.endsWith("]")) {
+        meta[key] = raw
+          .slice(1, -1)
+          .split(",")
+          .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean);
+      } else {
+        meta[key] = raw.replace(/^["']|["']$/g, "");
+      }
     }
   }
 
@@ -108,6 +117,8 @@ export async function syncTeamKnowledge(
     imported: 0,
     skipped: 0,
     errors: [],
+    categoriesImported: 0,
+    entitiesImported: 0,
   };
 
   // Determine input directory
@@ -136,6 +147,17 @@ export async function syncTeamKnowledge(
     ).map((r) => r.content_hash)
   );
 
+  // Import custom categories + canonical entities from config.json (v2+)
+  // before scanning files — entities must exist locally before per-file
+  // "mentions"/relationship edges below can reference them.
+  const config = readConfig(inputDir);
+  if (config.categories && config.categories.length > 0) {
+    result.categoriesImported = mergeCategories(db, config.categories);
+  }
+  if (config.entities && config.entities.length > 0) {
+    result.entitiesImported = mergeEntities(db, config.entities);
+  }
+
   // Scan for markdown files
   const knowledgeDir = join(inputDir, "knowledge");
   const glob = new Bun.Glob("**/*.md");
@@ -161,10 +183,11 @@ export async function syncTeamKnowledge(
           continue;
         }
 
-        // Segmented pipeline docs don't have **user**/**assistant** patterns;
-        // treat the whole body as a single assistant message.
-        const isSegmented = meta.pipeline === "segmented";
-        const messages = isSegmented
+        // Segmented and consolidated pipeline docs don't have
+        // **user**/**assistant** patterns; treat the whole body as a single
+        // assistant message.
+        const isSingleMessageDoc = meta.pipeline === "segmented" || meta.pipeline === "consolidated";
+        const messages = isSingleMessageDoc
           ? [{ role: "assistant", content: body.trim() }]
           : extractMessages(body);
 
@@ -173,9 +196,13 @@ export async function syncTeamKnowledge(
           continue;
         }
 
+        // Helper: coerce meta field to plain string
+        const metaStr = (v: string | string[] | undefined): string =>
+          Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
+
         // Create session from the imported file
         const sessionId =
-          meta.id || `team-${crypto.randomUUID().slice(0, 8)}`;
+          metaStr(meta.id) || `team-${crypto.randomUUID().slice(0, 8)}`;
 
         // Extract title from heading
         const titleMatch = body.match(/^#\s+(.+)/m);
@@ -189,27 +216,62 @@ export async function syncTeamKnowledge(
         upsertSessionMeta(
           db,
           sessionId,
-          meta.agent || "team",
-          meta.project || options.project
+          metaStr(meta.agent) || "team",
+          metaStr(meta.project) || options.project
         );
 
-        // Apply category tags
-        if (meta.category) {
-          tagSession(db, sessionId, meta.category, 1.0, "team");
+        // Restore all tags from the tags array; fall back to scalar category
+        const { isValidCategory } = await import("../categorize/schema");
+        if (Array.isArray(meta.tags) && meta.tags.length > 0) {
+          for (const tag of meta.tags) {
+            if (isValidCategory(db, tag)) {
+              tagSession(db, sessionId, tag, 1.0, "team");
+            }
+          }
+        } else if (meta.category) {
+          const cat = metaStr(meta.category);
+          if (isValidCategory(db, cat)) {
+            tagSession(db, sessionId, cat, 1.0, "team");
+          }
         }
 
         // Record the share for dedup
+        const primaryCategory = Array.isArray(meta.tags)
+          ? (meta.tags[0] ?? metaStr(meta.category) ?? null)
+          : metaStr(meta.category) || null;
         db.prepare(
           `INSERT OR IGNORE INTO smriti_shares (id, session_id, category_id, project_id, author, content_hash)
            VALUES (?, ?, ?, ?, ?, ?)`
         ).run(
           crypto.randomUUID().slice(0, 8),
           sessionId,
-          meta.category || null,
-          meta.project || null,
-          meta.author || "team",
+          primaryCategory,
+          metaStr(meta.project) || null,
+          metaStr(meta.author) || "team",
           contentHash
         );
+
+        // Re-create relationship edges from frontmatter. Unlike entities,
+        // these need no canonicalization: unit ids are portable UUIDs
+        // already shared as `sessionId` above, so edges reference the same
+        // node on every machine that imports this file.
+        const asArray = (v: string | string[] | undefined): string[] =>
+          v === undefined ? [] : Array.isArray(v) ? v : [v];
+
+        for (const entityId of asArray(meta.entity_ids)) {
+          if (!entityId) continue;
+          insertRelationship(db, "knowledge_unit", sessionId, "mentions", "entity", entityId, {
+            source: "extraction",
+          });
+        }
+        for (const predicate of ["relatesTo", "supersedes", "contradicts"] as RelationshipPredicate[]) {
+          for (const objectId of asArray(meta[predicate])) {
+            if (!objectId) continue;
+            insertRelationship(db, "knowledge_unit", sessionId, predicate, "knowledge_unit", objectId, {
+              source: "llm",
+            });
+          }
+        }
 
         result.imported++;
       } catch (err: any) {

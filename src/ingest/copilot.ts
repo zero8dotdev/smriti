@@ -28,7 +28,11 @@ type CopilotTurn = {
   role?: string;
   content?: string;
   /** Some versions nest content here */
-  message?: string | { value?: string };
+  message?: string | { value?: string; text?: string };
+  /** Response items (VS Code 1.90+): markdown text lives in `value` */
+  value?: string;
+  /** Response item kind: markdownContent, thinking, progressTaskSerialized, ... */
+  kind?: string;
   timestamp?: string | number;
 };
 
@@ -119,11 +123,29 @@ export function deriveProjectId(workspacePath: string): string {
 // Parsing
 // =============================================================================
 
+/** Response item kinds that carry no user-facing conversation text */
+const NON_TEXT_RESPONSE_KINDS = new Set([
+  "thinking",
+  "progressTaskSerialized",
+  "mcpServersStarting",
+  "toolInvocationSerialized",
+  "prepareToolInvocation",
+  "codeblockUri",
+  "undoStop",
+]);
+
 /** Extract text from a turn regardless of which VS Code version wrote it */
 function extractTurnText(turn: CopilotTurn): string {
   if (typeof turn.content === "string") return turn.content;
   if (typeof turn.message === "string") return turn.message;
-  if (typeof turn.message === "object" && turn.message?.value) return turn.message.value;
+  if (typeof turn.message === "object") {
+    if (turn.message?.value) return turn.message.value;
+    if (turn.message?.text) return turn.message.text;
+  }
+  // Response items: markdown text in `value` (skip thinking/progress/tool noise)
+  if (typeof turn.value === "string" && !NON_TEXT_RESPONSE_KINDS.has(turn.kind ?? "")) {
+    return turn.value;
+  }
   return "";
 }
 
@@ -142,9 +164,28 @@ export function parseCopilotJson(content: string): ParsedMessage[] {
 
   let session: CopilotSession;
   try {
-    session = JSON.parse(content);
+    const parsed = JSON.parse(content);
+    // Single-line JSONL snapshot: {kind: 0, v: {...session...}}
+    session = parsed?.kind === 0 && parsed.v && typeof parsed.v === "object"
+      ? (parsed.v as CopilotSession)
+      : parsed;
   } catch {
-    return messages;
+    // JSONL format (VS Code 1.10x+): lines of {kind, v}; kind 0 carries the
+    // full session snapshot — use the last snapshot in the file.
+    let snapshot: CopilotSession | null = null;
+    for (const line of content.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry?.kind === 0 && entry.v && typeof entry.v === "object") {
+          snapshot = entry.v as CopilotSession;
+        }
+      } catch {
+        // skip malformed line
+      }
+    }
+    if (!snapshot) return messages;
+    session = snapshot;
   }
 
   // --- Format 1: session.turns[] (older VS Code)
@@ -206,7 +247,7 @@ export async function discoverCopilotSessions(options: {
   const sessions: CopilotSessionMeta[] = [];
 
   for (const root of roots) {
-    const glob = new Bun.Glob("*/chatSessions/*.json");
+    const glob = new Bun.Glob("*/chatSessions/*.{json,jsonl}");
     try {
       for await (const match of glob.scan({ cwd: root, absolute: false })) {
         const normalizedMatch = match.replaceAll("\\", "/");
@@ -216,7 +257,8 @@ export async function discoverCopilotSessions(options: {
 
         if (options.projectPath && workspacePath !== options.projectPath) continue;
 
-        const sessionId = `copilot-${basename(normalizedMatch, ".json")}`;
+        const ext = normalizedMatch.endsWith(".jsonl") ? ".jsonl" : ".json";
+        const sessionId = `copilot-${basename(normalizedMatch, ext)}`;
         sessions.push({ sessionId, filePath, workspacePath });
       }
     } catch {

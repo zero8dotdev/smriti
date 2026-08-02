@@ -134,7 +134,33 @@ smriti embed                     # Build vector embeddings
 smriti categorize                # Auto-categorize sessions
 smriti share --project myapp     # Export to .smriti/ for git
 smriti sync                      # Import team knowledge
+
+# Daemon (v0.8+) — cross-agent capture in the background
+smriti daemon install            # Install LaunchAgent/systemd unit; auto-start at login
+smriti daemon status             # PID, uptime, watched agents
+smriti daemon stop               # Graceful shutdown
+smriti daemon logs               # Tail the daemon log
+smriti daemon uninstall          # Reverse install
+smriti daemon                    # Run in foreground (debugging)
 ```
+
+### The Claude Stop hook with the daemon
+
+When the daemon is installed, the Claude Stop hook becomes a 5ms socket
+poke instead of a full ingest invocation. Recommended template:
+
+```bash
+#!/bin/bash
+SOCK="$HOME/.cache/smriti/daemon.sock"
+if [ -S "$SOCK" ]; then
+  : | nc -U "$SOCK" 2>/dev/null
+else
+  /usr/bin/lockf -t 0 /tmp/smriti-ingest.lock smriti ingest claude 2>/dev/null
+fi
+exit 0
+```
+
+The `lockf` fallback keeps the system working when the daemon isn't running.
 
 ## Project Structure
 
@@ -249,7 +275,7 @@ See `docs/internal/ingest-architecture.md` for details.
 | `COPILOT_STORAGE_DIR`       | auto-detected per OS        | VS Code workspaceStorage root override |
 | `SMRITI_PROJECTS_ROOT`      | `~/zero8.dev`               | Projects root for ID derivation        |
 | `OLLAMA_HOST`               | `http://127.0.0.1:11434`    | Ollama endpoint                        |
-| `QMD_MEMORY_MODEL`          | `qwen3:8b-tuned`            | Ollama model for synthesis             |
+| `QMD_MEMORY_MODEL`          | `qwen3.5:9b-mlx-tuned`      | Ollama model for synthesis (MLX engine)|
 | `SMRITI_CLASSIFY_THRESHOLD` | `0.5`                       | LLM classification trigger threshold   |
 | `SMRITI_AUTHOR`             | `$USER`                     | Git author for team sharing            |
 | `SMRITI_DAEMON_DEBOUNCE_MS` | `30000`                     | Daemon file-stability wait (v0.4.0)    |

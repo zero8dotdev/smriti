@@ -6,29 +6,40 @@
  *
  * Config via env:
  *   OLLAMA_HOST      - Ollama server URL (default: http://127.0.0.1:11434)
- *   QMD_MEMORY_MODEL - Model for summarization/synthesis (default: qwen3:8b-tuned)
+ *   QMD_MEMORY_MODEL - Model for summarization/synthesis (required, no default)
  */
 
-// =============================================================================
-// Configuration
-// =============================================================================
-
-const OLLAMA_HOST = Bun.env.OLLAMA_HOST || "http://127.0.0.1:11434";
-const DEFAULT_MEMORY_MODEL = Bun.env.QMD_MEMORY_MODEL || "qwen3:8b-tuned";
+import { OLLAMA_HOST, requireOllamaModel } from "./config";
 
 // =============================================================================
 // Types
 // =============================================================================
 
+export type OllamaToolCall = {
+  id?: string;
+  function: { name: string; arguments: Record<string, unknown> };
+};
+
 export type OllamaChatMessage = {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_calls?: OllamaToolCall[];
+};
+
+export type OllamaTool = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
 };
 
 export type OllamaChatOptions = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  tools?: OllamaTool[];
 };
 
 export type OllamaChatResponse = {
@@ -51,7 +62,7 @@ export async function ollamaChat(
   messages: OllamaChatMessage[],
   options: OllamaChatOptions = {}
 ): Promise<OllamaChatResponse> {
-  const model = options.model || DEFAULT_MEMORY_MODEL;
+  const model = requireOllamaModel(options.model);
   const resp = await fetch(`${OLLAMA_HOST}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -59,6 +70,7 @@ export async function ollamaChat(
       model,
       messages,
       stream: false,
+      ...(options.tools && { tools: options.tools }),
       options: {
         ...(options.temperature !== undefined && { temperature: options.temperature }),
         ...(options.maxTokens !== undefined && { num_predict: options.maxTokens }),
@@ -140,6 +152,129 @@ export async function ollamaRecall(
 }
 
 /**
+ * Answer a natural language question grounded in retrieved session memories.
+ * Returns the answer only — caller appends citations.
+ */
+export async function ollamaAsk(
+  question: string,
+  sources: string,
+  options: OllamaChatOptions = {}
+): Promise<string> {
+  const messages: OllamaChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "You are an expert assistant with access to an engineer's work history. " +
+        "Answer the question directly and precisely using only the provided sources. " +
+        "If sources are insufficient, say so explicitly. " +
+        "Cite sources by [N] where N is the source number. " +
+        "Be concise — answer in 2-4 sentences unless depth is needed. " +
+        "Output only the answer, no preamble.",
+    },
+    {
+      role: "user",
+      content: `Question: ${question}\n\nSources:\n${sources}`,
+    },
+  ];
+
+  const resp = await ollamaChat(messages, {
+    ...options,
+    temperature: options.temperature ?? 0.2,
+    maxTokens: options.maxTokens ?? 512,
+  });
+
+  return resp.message.content.trim();
+}
+
+/**
+ * Synthesize how thinking on a topic evolved across a chronological session timeline.
+ * Returns a narrative string showing key shifts, decisions, and reversals.
+ */
+export async function ollamaDrift(
+  topic: string,
+  timeline: string,
+  options: OllamaChatOptions = {}
+): Promise<string> {
+  const messages: OllamaChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "You are an engineering historian. Given a chronological timeline of sessions about a topic, " +
+        "describe how the team's thinking evolved. Focus on: decisions made, approaches tried, " +
+        "reversals, refinements, and the current state. Use a compact timeline format: " +
+        "one sentence per significant change. Highlight turning points. Output only the narrative.",
+    },
+    {
+      role: "user",
+      content: `Topic: ${topic}\n\nTimeline:\n${timeline}`,
+    },
+  ];
+
+  const resp = await ollamaChat(messages, {
+    ...options,
+    temperature: options.temperature ?? 0.3,
+    maxTokens: options.maxTokens ?? 768,
+  });
+
+  return resp.message.content.trim();
+}
+
+export type ConflictResult = {
+  pair: [number, number];
+  description: string;
+};
+
+/**
+ * Detect contradictory pairs among recall results.
+ * Returns a list of conflicting index pairs with descriptions.
+ * Uses one Ollama call for all pairs (batch approach).
+ */
+export async function ollamaCheckConflicts(
+  topic: string,
+  passages: { n: number; title: string; content: string }[],
+  options: OllamaChatOptions = {}
+): Promise<ConflictResult[]> {
+  const formatted = passages
+    .map(p => `[${p.n}] ${p.title}\n${p.content.slice(0, 300)}`)
+    .join("\n\n---\n\n");
+
+  const messages: OllamaChatMessage[] = [
+    {
+      role: "system",
+      content:
+        "You detect contradictions between engineering decision records. " +
+        "Given numbered passages about the same topic, identify pairs that express conflicting approaches. " +
+        "Format each conflict as: CONFLICT [i] vs [j]: one-sentence description\n" +
+        "If no conflicts exist, output only: NO_CONFLICTS",
+    },
+    {
+      role: "user",
+      content: `Topic: ${topic}\n\nPassages:\n${formatted}`,
+    },
+  ];
+
+  const resp = await ollamaChat(messages, {
+    ...options,
+    temperature: 0.1,
+    maxTokens: options.maxTokens ?? 256,
+  });
+
+  const text = resp.message.content.trim();
+  if (text.startsWith("NO_CONFLICTS")) return [];
+
+  const results: ConflictResult[] = [];
+  const conflictRe = /CONFLICT\s+\[(\d+)\]\s+vs\s+\[(\d+)\]:\s*(.+)/gi;
+  let match;
+  while ((match = conflictRe.exec(text)) !== null) {
+    results.push({
+      pair: [parseInt(match[1]!), parseInt(match[2]!)],
+      description: match[3]!.trim(),
+    });
+  }
+  return results;
+}
+
+/**
  * Check if Ollama is running and accessible.
  * Pings the /api/tags endpoint.
  */
@@ -165,5 +300,3 @@ export async function ollamaHealthCheck(): Promise<{
     };
   }
 }
-
-export { DEFAULT_MEMORY_MODEL, OLLAMA_HOST };

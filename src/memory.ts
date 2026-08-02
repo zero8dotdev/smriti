@@ -18,16 +18,19 @@ import type { Database } from "../qmd/src/db";
 import {
   hashContent,
   chunkDocumentByTokens,
-  insertEmbedding,
   reciprocalRankFusion,
-  type RankedResult,
-} from "../qmd/src/store.js";
-import {
-  getDefaultLlamaCpp,
   formatQueryForEmbedding,
   formatDocForEmbedding,
-} from "../qmd/src/llm.js";
+  type RankedResult,
+} from "../qmd/src/store.js";
+import { getQmdStore } from "./store";
 import { ollamaSummarize, ollamaRecall as ollamaRecallSynthesize } from "./ollama";
+
+// Returns the LLM instance from the SDK store (set during initSmriti).
+// Throws if called before initSmriti() — only vector search + embed paths use this.
+function getMemoryLlm() {
+  return getQmdStore().internal.llm!;
+}
 
 // =============================================================================
 // Types
@@ -254,6 +257,44 @@ export function clearAllSessions(db: Database, hard: boolean = false): number {
   }
 }
 
+/**
+ * Remove content_vectors/vectors_vec rows whose hash is no longer referenced
+ * by any memory message or active QMD document. Scoped deletion — unlike
+ * QMD's own cleanupOrphanedVectors (which only checks `documents` and would
+ * wipe every memory-message embedding, since messages aren't rows in
+ * `documents`). Called after a hard session delete; a no-op (returns 0) when
+ * the vector/document tables aren't present (e.g. sqlite-vec unavailable, or
+ * a minimal test schema that skipped createStore()).
+ */
+export function cleanupOrphanedMemoryVectors(db: Database): number {
+  try {
+    db.prepare(`SELECT 1 FROM vectors_vec LIMIT 0`).get();
+    db.prepare(`SELECT 1 FROM documents LIMIT 0`).get();
+    db.prepare(`SELECT 1 FROM content_vectors LIMIT 0`).get();
+  } catch {
+    return 0;
+  }
+
+  const orphanWhere = `
+    NOT EXISTS (SELECT 1 FROM memory_messages m WHERE m.hash = content_vectors.hash)
+    AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.hash = content_vectors.hash AND d.active = 1)
+  `;
+
+  const { c } = db
+    .prepare(`SELECT COUNT(*) as c FROM content_vectors WHERE ${orphanWhere}`)
+    .get() as { c: number };
+  if (c === 0) return 0;
+
+  db.exec(`
+    DELETE FROM vectors_vec WHERE hash_seq IN (
+      SELECT content_vectors.hash || '_' || content_vectors.seq FROM content_vectors WHERE ${orphanWhere}
+    )
+  `);
+  db.exec(`DELETE FROM content_vectors WHERE ${orphanWhere}`);
+
+  return c;
+}
+
 // =============================================================================
 // Message CRUD
 // =============================================================================
@@ -266,9 +307,11 @@ export async function addMessage(
   sessionId: string,
   role: string,
   content: string,
-  options: { title?: string; metadata?: Record<string, unknown> } = {}
+  options: { title?: string; metadata?: Record<string, unknown>; timestamp?: string } = {}
 ): Promise<MemoryMessage> {
   const now = new Date().toISOString();
+  // Backfilled ingests pass the original message timestamp; live writes default to now
+  const created = options.timestamp || now;
   const hash = await hashContent(content);
 
   // Preserve "new" behavior, which generates an ID.
@@ -281,7 +324,7 @@ export async function addMessage(
   db.prepare(
     `INSERT OR IGNORE INTO memory_sessions (id, title, created_at, updated_at, active)
      VALUES (?, ?, ?, ?, 1)`
-  ).run(resolvedSessionId, options.title || "", now, now);
+  ).run(resolvedSessionId, options.title || "", created, created);
 
   // If title is provided later, fill it only when current title is empty.
   if (options.title) {
@@ -301,11 +344,11 @@ export async function addMessage(
       `INSERT INTO memory_messages (session_id, role, content, hash, created_at, metadata)
      VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(resolvedSessionId, role, content, hash, now, metadataStr);
+    .run(resolvedSessionId, role, content, hash, created, metadataStr);
 
   // Update session timestamp
   db.prepare(`UPDATE memory_sessions SET updated_at = ? WHERE id = ?`).run(
-    now,
+    created,
     resolvedSessionId
   );
 
@@ -315,7 +358,7 @@ export async function addMessage(
     role,
     content,
     hash,
-    created_at: now,
+    created_at: created,
     metadata: options.metadata || null,
   };
 }
@@ -442,7 +485,7 @@ export async function searchMemoryVec(
   if (!tableExists) return [];
 
   // Get query embedding
-  const llm = getDefaultLlamaCpp();
+  const llm = getMemoryLlm();
   const formattedQuery = formatQueryForEmbedding(query);
   const result = await llm.embed(formattedQuery, { isQuery: true });
   if (!result) return [];
@@ -549,7 +592,7 @@ export async function embedMemoryMessages(
 
   if (unembedded.length === 0) return 0;
 
-  const llm = getDefaultLlamaCpp();
+  const llm = getMemoryLlm();
   let embedded = 0;
 
   for (const msg of unembedded) {
@@ -579,8 +622,7 @@ export async function embedMemoryMessages(
     const now = new Date().toISOString();
 
     // Insert first chunk embedding
-    insertEmbedding(
-      db,
+    getQmdStore().internal.insertEmbedding(
       msg.hash,
       0,
       chunks[0]!.pos,
@@ -595,8 +637,7 @@ export async function embedMemoryMessages(
       const text = formatDocForEmbedding(chunk.text);
       const embedResult = await llm.embed(text);
       if (embedResult) {
-        insertEmbedding(
-          db,
+        getQmdStore().internal.insertEmbedding(
           msg.hash,
           i,
           chunk.pos,
@@ -681,6 +722,7 @@ export async function summarizeRecentSessions(
 /**
  * Recall relevant memories for a query.
  * Combines FTS + vector search using RRF, deduplicates by session,
+ * optionally expands query + reranks (skipped when fast=true),
  * and optionally synthesizes via Ollama.
  */
 export async function recallMemories(
@@ -691,20 +733,27 @@ export async function recallMemories(
     synthesize?: boolean;
     model?: string;
     maxTokens?: number;
+    fast?: boolean;
+    intent?: string;
   } = {}
 ): Promise<{ results: MemorySearchResult[]; synthesis?: string }> {
   const startedAt = performance.now();
   const shouldTraceRecall = process.env.SMRITI_BENCH_TRACE === "1";
   const limit = options.limit ?? 10;
+  const fast = options.fast ?? false;
+  const intent = options.intent;
 
-  // Run FTS and vector search
+  // Candidate fetch size — fetch more when reranking to feed the reranker
+  const candidateLimit = fast ? limit : Math.max(limit * 4, 40);
+
+  // Run FTS and vector search for the original query
   const ftsStartedAt = performance.now();
-  const ftsResults = searchMemoryFTS(db, query, limit);
+  const ftsResults = searchMemoryFTS(db, query, candidateLimit);
   const ftsMs = performance.now() - ftsStartedAt;
   let vecResults: MemorySearchResult[] = [];
   const vecStartedAt = performance.now();
   try {
-    vecResults = await searchMemoryVec(db, query, limit);
+    vecResults = await searchMemoryVec(db, query, candidateLimit);
   } catch {
     // Vector search may fail if no embeddings exist
   }
@@ -720,12 +769,38 @@ export async function recallMemories(
       score: r.score,
     }));
 
-  // Fuse results with RRF
+  // Build ranked lists — start with original query results
+  const rankedLists: RankedResult[][] = [toRanked(ftsResults), toRanked(vecResults)];
+  const rankWeights: number[] = [1.0, 1.0];
+
+  // Quality mode: expand query variants and fold in their results
+  if (!fast) {
+    try {
+      const store = getQmdStore();
+      const expanded = await store.internal.expandQuery(query);
+      for (const variant of expanded) {
+        // lex variants are best suited for FTS; vec/hyde for vector search
+        const variantFts = searchMemoryFTS(db, variant.query, candidateLimit);
+        rankedLists.push(toRanked(variantFts));
+        rankWeights.push(0.7);
+        if (variant.type !== "lex") {
+          try {
+            const variantVec = await searchMemoryVec(db, variant.query, candidateLimit);
+            rankedLists.push(toRanked(variantVec));
+            rankWeights.push(0.7);
+          } catch {
+            // skip if no embeddings
+          }
+        }
+      }
+    } catch {
+      // LLM unavailable — fall through with original results only
+    }
+  }
+
+  // Fuse all ranked lists with RRF
   const fuseStartedAt = performance.now();
-  const fused = reciprocalRankFusion(
-    [toRanked(ftsResults), toRanked(vecResults)],
-    [1.0, 1.0]
-  );
+  const fused = reciprocalRankFusion(rankedLists, rankWeights);
   const fuseMs = performance.now() - fuseStartedAt;
 
   // Deduplicate by session, keeping best score per session
@@ -766,6 +841,57 @@ export async function recallMemories(
     }
   }
   const dedupeMs = performance.now() - dedupeStartedAt;
+
+  // Quality mode: rerank the deduped candidates before density blending
+  if (!fast && dedupedResults.length > 1) {
+    try {
+      const store = getQmdStore();
+      const docs = dedupedResults.map((r) => ({
+        file: `${r.session_id}:${r.message_id}`,
+        text: r.content,
+      }));
+      const reranked = await store.internal.rerank(query, docs, undefined, intent);
+      const scoreMap = new Map(reranked.map((r) => [r.file, r.score]));
+      for (const r of dedupedResults) {
+        const key = `${r.session_id}:${r.message_id}`;
+        const rerankerScore = scoreMap.get(key);
+        if (rerankerScore !== undefined) {
+          // Blend: 60% reranker + 40% RRF to stay anchored to retrieval signal
+          r.score = rerankerScore * 0.6 + r.score * 0.4;
+        }
+      }
+      dedupedResults.sort((a, b) => b.score - a.score);
+    } catch {
+      // Reranker unavailable — keep RRF order
+    }
+  }
+
+  // Blend density scores into recall scores — dense sessions rank higher.
+  // smriti_session_meta is a Smriti-layer table, not a QMD core one — this
+  // file is meant to stay usable against a bare QMD store (e.g.
+  // scripts/bench-qmd.ts), so a missing table degrades gracefully instead
+  // of throwing, same as the vector-search fallback above.
+  if (dedupedResults.length > 0) {
+    try {
+      const sessionIds = dedupedResults.map((r) => r.session_id);
+      const placeholders = sessionIds.map(() => "?").join(",");
+      const densityRows = (db as any)
+        .prepare(
+          `SELECT session_id, COALESCE(density_score, 0) as density_score
+           FROM smriti_session_meta WHERE session_id IN (${placeholders})`
+        )
+        .all(...sessionIds) as { session_id: string; density_score: number }[];
+      const densityMap = new Map(densityRows.map((r) => [r.session_id, r.density_score]));
+
+      for (const r of dedupedResults) {
+        const ds = densityMap.get(r.session_id) ?? 0;
+        r.score = r.score * 0.8 + ds * 0.2;
+      }
+      dedupedResults.sort((a, b) => b.score - a.score);
+    } catch {
+      // smriti_session_meta doesn't exist (bare QMD store) — skip blending.
+    }
+  }
 
   const results = dedupedResults.slice(0, limit);
 

@@ -1,6 +1,6 @@
 {
   "name": "smriti",
-  "version": "0.6.0",
+  "version": "0.8.2",
   "description": "Smriti - Unified memory layer across all AI agents",
   "type": "module",
   "bin": {
@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
-    "test": "bun test",
+    "test": "bun test --cwd ./test",
+    "eval:recall": "bun run test/eval/recall-quality.eval.ts",
+    "eval:relations": "bun run test/eval/relation-inference.eval.ts",
     "smriti": "bun src/index.ts",
     "bench:qmd": "bun run scripts/bench-qmd.ts --profile ci-small --out bench/results/ci-small.json --no-llm",
     "bench:qmd:repeat": "bun run scripts/bench-qmd-repeat.ts --profiles ci-small,small,medium --runs 3 --out bench/results/repeat-summary.json",
@@ -17,9 +19,11 @@
     "bench:scorecard": "bun run scripts/bench-scorecard.ts --baseline bench/baseline.ci-small.json --profile ci-small --threshold-pct 20",
     "bench:ingest-hotpaths": "bun run scripts/bench-ingest-hotpaths.ts",
     "bench:ingest-pipeline": "bun run scripts/bench-ingest-pipeline.ts --sessions 120 --messages 12",
-    "release:meta": "bun run scripts/release-meta.ts"
+    "release:meta": "bun run scripts/release-meta.ts",
+    "monitor": "bun run scripts/monitor-resources.ts"
   },
   "dependencies": {
+    "fast-glob": "3.3.3",
     "node-llama-cpp": "^3.0.0",
     "picomatch": "^4.0.0",
     "qmd": "file:./qmd"

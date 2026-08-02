@@ -7,7 +7,7 @@
 
 import type { Database } from "bun:sqlite";
 import { tagMessage, tagSession } from "../db";
-import { CLASSIFY_LLM_THRESHOLD, OLLAMA_HOST, OLLAMA_MODEL } from "../config";
+import { CLASSIFY_LLM_THRESHOLD, OLLAMA_HOST, requireOllamaModel } from "../config";
 import { ALL_CATEGORY_IDS } from "./schema";
 import { getRuleManager, type Rule } from "./rules/loader";
 
@@ -86,7 +86,7 @@ ${text.slice(0, 2000)}`;
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: OLLAMA_MODEL,
+        model: requireOllamaModel(),
         prompt,
         stream: false,
         options: { temperature: 0.1, num_predict: 50 },

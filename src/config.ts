@@ -33,11 +33,22 @@ export const CLINE_LOGS_DIR =
 /** GitHub Copilot (VS Code) workspaceStorage root — auto-detected per OS if not set */
 export const COPILOT_STORAGE_DIR = Bun.env.COPILOT_STORAGE_DIR || "";
 
-/** Daemon PID file path */
+/** Cursor IDE user directory root — auto-detected per OS if not set */
+export const CURSOR_STORAGE_DIR = Bun.env.CURSOR_STORAGE_DIR || "";
+
+/** Daemon PID file path. Load-bearing for single-instance enforcement. */
 export const DAEMON_PID_FILE = join(HOME, ".cache", "smriti", "daemon.pid");
 
 /** Daemon log file path */
 export const DAEMON_LOG_FILE = join(HOME, ".cache", "smriti", "daemon.log");
+
+/**
+ * Daemon IPC socket path. Used for the Claude Stop hook poke. NOT used for
+ * single-instance enforcement — Bun's net.createServer().listen() silently
+ * succeeds on duplicate bind and steals connections from the original.
+ * Single-instance lives in DAEMON_PID_FILE + kill(pid, 0) probe instead.
+ */
+export const DAEMON_SOCKET_FILE = join(HOME, ".cache", "smriti", "daemon.sock");
 
 /** Daemon debounce interval in ms — wait this long after last file change before ingesting */
 export const DAEMON_DEBOUNCE_MS = Number(Bun.env.SMRITI_DAEMON_DEBOUNCE_MS || "30000");
@@ -57,7 +68,18 @@ export const PROJECTS_ROOT =
 // =============================================================================
 
 export const OLLAMA_HOST = Bun.env.OLLAMA_HOST || "http://127.0.0.1:11434";
-export const OLLAMA_MODEL = Bun.env.QMD_MEMORY_MODEL || "qwen3:8b-tuned";
+export const OLLAMA_MODEL = Bun.env.QMD_MEMORY_MODEL;
+
+/** Resolve the Ollama model to use, preferring an explicit override. Throws if neither is set. */
+export function requireOllamaModel(explicit?: string): string {
+  const model = explicit || OLLAMA_MODEL;
+  if (!model) {
+    throw new Error(
+      "No Ollama model configured. Set QMD_MEMORY_MODEL in your environment or .env file."
+    );
+  }
+  return model;
+}
 
 /** Confidence threshold below which rule-based classification triggers LLM */
 export const CLASSIFY_LLM_THRESHOLD = Number(
@@ -75,3 +97,7 @@ export const DEFAULT_CONTEXT_DAYS = 7;
 
 /** Git author name for team sharing */
 export const AUTHOR = Bun.env.SMRITI_AUTHOR || Bun.env.USER || "unknown";
+
+/** Directory for session markdown documents (QMD smriti-sessions collection) */
+export const SMRITI_SESSIONS_DIR =
+  Bun.env.SMRITI_SESSIONS_DIR || join(HOME, ".cache", "smriti", "sessions");

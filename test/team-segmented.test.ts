@@ -17,12 +17,12 @@ import type { KnowledgeUnit } from "../src/team/types";
 
 let db: Database;
 
-beforeAll(() => {
-  db = initSmriti(":memory:");
+beforeAll(async () => {
+  db = await initSmriti(":memory:");
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeDb();
 });
 
 // =============================================================================
