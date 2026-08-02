@@ -209,6 +209,7 @@ test("consolidate segment phase creates mentions edges for every stored entity, 
       minRetrievals: 999,
       minRelevance: 999, // nothing promotable — isolates the segment phase
       outputDir: join(tmpDir, "ent-output"),
+      model: "test-model",
     });
 
     expect(result.unitsStored).toBe(1);
@@ -299,6 +300,7 @@ test("promote phase persists LLM-inferred relatesTo/supersedes/contradicts edges
       minRetrievals: 999,
       minRelevance: 8, // only infer-new (relevance 9) qualifies
       outputDir: join(tmpDir, "infer-output"),
+      model: "test-model",
     });
 
     expect(result.unitsPromoted).toBe(1);
@@ -344,6 +346,7 @@ test("promote phase never asserts a directional predicate in both directions for
       minRetrievals: 999,
       minRelevance: 8, // both unitA and unitB qualify
       outputDir: join(tmpDir, "bidir-output"),
+      model: "test-model",
     });
 
     expect(result.unitsPromoted).toBe(2);
