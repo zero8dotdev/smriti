@@ -277,6 +277,9 @@ export function formatConsolidateResult(result: {
   unitsStored: number;
   unitsSkipped: number;
   unitsPromoted: number;
+  unitsPruned?: number;
+  unitsArchived?: number;
+  pruneCandidates?: Array<{ id: string; topic: string; tier: string; action: string; reason: string }>;
   errors: string[];
 }): string {
   const lines = [
@@ -285,6 +288,20 @@ export function formatConsolidateResult(result: {
     `Units skipped (dedup): ${result.unitsSkipped}`,
     `Units promoted: ${result.unitsPromoted}`,
   ];
+
+  if (result.pruneCandidates && result.pruneCandidates.length > 0) {
+    lines.push("");
+    lines.push(`Prune candidates (dry-run — rerun with --yes to apply):`);
+    lines.push(
+      table(
+        ["Topic", "Tier", "Action", "Reason"],
+        result.pruneCandidates.map((c) => [c.topic, c.tier, c.action, c.reason])
+      )
+    );
+  } else if (result.unitsPruned !== undefined || result.unitsArchived !== undefined) {
+    lines.push(`Units pruned (deleted): ${result.unitsPruned ?? 0}`);
+    lines.push(`Units archived (superseded): ${result.unitsArchived ?? 0}`);
+  }
 
   if (result.errors.length > 0) {
     lines.push(`Errors: ${result.errors.length}`);

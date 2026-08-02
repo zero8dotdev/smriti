@@ -9,7 +9,7 @@
 
 import { test, expect, beforeAll, afterAll, mock } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
@@ -20,12 +20,15 @@ import {
   updateDensityScore,
   insertKnowledgeUnit,
   listKnowledgeUnits,
+  promoteKnowledgeUnit,
 } from "../src/db";
 import {
   consolidateKnowledge,
+  pruneKnowledge,
   classifyRelationshipsTextFormat,
   classifyRelationshipsToolCall,
 } from "../src/learn/consolidate";
+import { insertRelationship, getRelationships } from "../src/learn/entities";
 import { recall } from "../src/search/recall";
 import type { KnowledgeUnit } from "../src/team/types";
 
@@ -424,4 +427,125 @@ test("classifyRelationshipsToolCall returns nothing when the model answers witho
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+// =============================================================================
+// Prune (stale segmented units, superseded canonical units)
+// =============================================================================
+
+function backdateUnit(unitId: string, daysAgo: number) {
+  db.prepare(
+    `UPDATE smriti_knowledge_units SET created_at = datetime('now', '-' || ? || ' days') WHERE id = ?`
+  ).run(daysAgo, unitId);
+}
+
+test("pruneKnowledge dry-run reports stale segmented units without deleting them", async () => {
+  const stale: KnowledgeUnit = {
+    id: "prune-stale-1",
+    topic: "Never promoted, never retrieved",
+    category: "code/pattern",
+    relevance: 3,
+    entities: [],
+    files: [],
+    plainText: "Low relevance, sat unused for weeks.",
+    lineRanges: [{ start: 0, end: 1 }],
+  };
+  insertKnowledgeUnit(db, stale, "prune-s1", "pruneproj", "prune-hash-1");
+  backdateUnit("prune-stale-1", 45);
+
+  const result = await pruneKnowledge(db, { dryRun: true, pruneStaleDays: 30, minRelevance: 8 });
+
+  expect(result.unitsPruned).toBe(0);
+  expect(result.unitsArchived).toBe(0);
+  expect(result.pruneCandidates?.map((c) => c.id)).toContain("prune-stale-1");
+
+  const stillThere = listKnowledgeUnits(db, { tier: "segmented" }).find((u) => u.id === "prune-stale-1");
+  expect(stillThere).toBeDefined();
+});
+
+test("pruneKnowledge --apply deletes stale segmented units and their relationship edges", async () => {
+  const stale: KnowledgeUnit = {
+    id: "prune-apply-1",
+    topic: "Deletable stale unit",
+    category: "code/pattern",
+    relevance: 2,
+    entities: [],
+    files: [],
+    plainText: "Stale and about to be deleted.",
+    lineRanges: [{ start: 0, end: 1 }],
+  };
+  insertKnowledgeUnit(db, stale, "prune-s2", "pruneproj", "prune-hash-2");
+  backdateUnit("prune-apply-1", 45);
+  insertRelationship(db, "knowledge_unit", "prune-apply-1", "mentions", "entity", "some-entity");
+
+  const result = await pruneKnowledge(db, { dryRun: false, pruneStaleDays: 30, minRelevance: 8 });
+
+  expect(result.unitsPruned).toBeGreaterThanOrEqual(1);
+  const deleted = db.prepare(`SELECT 1 FROM smriti_knowledge_units WHERE id = ?`).get("prune-apply-1");
+  expect(deleted).toBeNull();
+
+  const edges = getRelationships(db, { subjectType: "knowledge_unit", subjectId: "prune-apply-1" });
+  expect(edges.length).toBe(0);
+});
+
+test("pruneKnowledge never prunes high-relevance segmented units even at zero retrievals", async () => {
+  const highRelevance: KnowledgeUnit = {
+    id: "prune-high-relevance",
+    topic: "One consolidate run away from promoting",
+    category: "architecture/decision",
+    relevance: 9,
+    entities: [],
+    files: [],
+    plainText: "High relevance, just hasn't been promoted yet.",
+    lineRanges: [{ start: 0, end: 1 }],
+  };
+  insertKnowledgeUnit(db, highRelevance, "prune-s3", "pruneproj", "prune-hash-3");
+  backdateUnit("prune-high-relevance", 45);
+
+  const result = await pruneKnowledge(db, { dryRun: true, pruneStaleDays: 30, minRelevance: 8 });
+
+  expect(result.pruneCandidates?.map((c) => c.id)).not.toContain("prune-high-relevance");
+});
+
+test("pruneKnowledge archives superseded canonical units and appends a banner to their doc", async () => {
+  const outputDir = join(tmpDir, "prune-archive-output");
+  const docRelPath = "knowledge/architecture-decision/old-doc.md";
+  const docFullPath = join(outputDir, docRelPath);
+  mkdirSync(join(outputDir, "knowledge/architecture-decision"), { recursive: true });
+  writeFileSync(docFullPath, "---\nid: old-unit\n---\n\n# Old guidance\n\nUse a 1-minute TTL.");
+
+  const oldUnit: KnowledgeUnit = {
+    id: "prune-superseded", topic: "Old Redis TTL guidance", category: "architecture/decision", relevance: 9,
+    entities: [], files: [], plainText: "Use a 1-minute TTL.", lineRanges: [{ start: 0, end: 1 }],
+  };
+  const newUnit: KnowledgeUnit = {
+    id: "prune-superseder", topic: "New Redis TTL guidance", category: "architecture/decision", relevance: 9,
+    entities: [], files: [], plainText: "Use a 5-minute TTL instead.", lineRanges: [{ start: 0, end: 1 }],
+  };
+  insertKnowledgeUnit(db, oldUnit, "prune-s4", "pruneproj", "prune-hash-old");
+  insertKnowledgeUnit(db, newUnit, "prune-s5", "pruneproj", "prune-hash-new");
+  promoteKnowledgeUnit(db, "prune-superseded", docRelPath, "prune-share-1");
+  promoteKnowledgeUnit(db, "prune-superseder", "knowledge/architecture-decision/new-doc.md", "prune-share-2");
+  insertRelationship(db, "knowledge_unit", "prune-superseder", "supersedes", "knowledge_unit", "prune-superseded", {
+    source: "llm",
+  });
+
+  const result = await pruneKnowledge(db, { dryRun: false, outputDir });
+
+  expect(result.unitsArchived).toBe(1);
+
+  const archived = listKnowledgeUnits(db, { tier: "archived" }).find((u) => u.id === "prune-superseded");
+  expect(archived).toBeDefined();
+  expect(archived!.archived_reason).toBe("superseded");
+
+  const docContent = readFileSync(docFullPath, "utf-8");
+  expect(docContent).toContain("Archived");
+  expect(docContent).toContain("New Redis TTL guidance");
+
+  // The supersedes edge that justified archiving (and any mentions edges)
+  // are the audit trail — left untouched, not cascade-deleted.
+  const supersedeEdge = getRelationships(db, {
+    subjectType: "knowledge_unit", subjectId: "prune-superseder", predicate: "supersedes", objectId: "prune-superseded",
+  });
+  expect(supersedeEdge.length).toBe(1);
 });

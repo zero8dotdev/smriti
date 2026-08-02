@@ -24,6 +24,10 @@ import {
   insertKnowledgeUnit,
   findPromotableUnits,
   promoteKnowledgeUnit,
+  findStaleSegmentedUnits,
+  findSupersededCanonicalUnits,
+  deleteKnowledgeUnit,
+  archiveKnowledgeUnit,
 } from "../db";
 import { getSessionMessages } from "../team/share";
 import { segmentSession } from "../team/segment";
@@ -55,6 +59,20 @@ export type ConsolidateOptions = {
   author?: string;
   sessionLimit?: number;
   onProgress?: (msg: string) => void;
+  /** Also run the prune phase (dry-run by default — see pruneApply). */
+  prune?: boolean;
+  /** Age threshold (days) for stale, never-promoted segmented units. Default 30. */
+  pruneStaleDays?: number;
+  /** Actually delete/archive prune candidates. Without this, prune only reports candidates (dry-run). */
+  pruneApply?: boolean;
+};
+
+export type PruneCandidate = {
+  id: string;
+  topic: string;
+  tier: "segmented" | "canonical";
+  action: "delete" | "archive";
+  reason: string;
 };
 
 export type ConsolidateResult = {
@@ -62,6 +80,10 @@ export type ConsolidateResult = {
   unitsStored: number;
   unitsSkipped: number;
   unitsPromoted: number;
+  /** Only set when options.prune is true. */
+  unitsPruned?: number;
+  unitsArchived?: number;
+  pruneCandidates?: PruneCandidate[];
   errors: string[];
 };
 
@@ -246,7 +268,118 @@ export async function consolidateKnowledge(
 
   options.onProgress?.(`promote phase: ${result.unitsPromoted} units promoted`);
 
+  // ===========================================================================
+  // Prune phase: expire stale never-promoted units, archive superseded ones.
+  // Pure DB logic (age, retrieval_count, supersedes-edges are all already in
+  // SQLite by now) — no LLM call, dry-run by default.
+  // ===========================================================================
+
+  if (options.prune) {
+    const pruneResult = await pruneKnowledge(db, {
+      outputDir,
+      pruneStaleDays: options.pruneStaleDays,
+      minRelevance: options.minRelevance,
+      dryRun: !options.pruneApply,
+    });
+    result.unitsPruned = pruneResult.unitsPruned;
+    result.unitsArchived = pruneResult.unitsArchived;
+    result.pruneCandidates = pruneResult.pruneCandidates;
+
+    options.onProgress?.(
+      pruneResult.pruneCandidates
+        ? `prune phase (dry-run): ${pruneResult.pruneCandidates.length} candidates — rerun with --yes to apply`
+        : `prune phase: ${pruneResult.unitsPruned} units deleted, ${pruneResult.unitsArchived} archived`
+    );
+  }
+
   return result;
+}
+
+// =============================================================================
+// Prune (expire stale segmented units, archive superseded canonical units)
+// =============================================================================
+
+export type PruneOptions = {
+  outputDir?: string;
+  pruneStaleDays?: number;
+  minRelevance?: number;
+  /** Report candidates without mutating the DB. Defaults to true — pass false to apply. */
+  dryRun?: boolean;
+};
+
+export type PruneResult = {
+  unitsPruned: number;
+  unitsArchived: number;
+  pruneCandidates?: PruneCandidate[];
+};
+
+export async function pruneKnowledge(
+  db: Database,
+  options: PruneOptions = {}
+): Promise<PruneResult> {
+  const dryRun = options.dryRun ?? true;
+  const outputDir = options.outputDir || join(process.cwd(), SMRITI_DIR);
+  const staleDays = options.pruneStaleDays ?? 30;
+  const minRelevance = options.minRelevance ?? 8;
+
+  const stale = findStaleSegmentedUnits(db, staleDays, minRelevance);
+  const superseded = findSupersededCanonicalUnits(db);
+
+  if (dryRun) {
+    const pruneCandidates: PruneCandidate[] = [
+      ...stale.map((u) => ({
+        id: u.id,
+        topic: u.topic,
+        tier: "segmented" as const,
+        action: "delete" as const,
+        reason: `stale segmented, 0 retrievals, relevance ${u.relevance} < ${minRelevance}`,
+      })),
+      ...superseded.map((u) => ({
+        id: u.id,
+        topic: u.topic,
+        tier: "canonical" as const,
+        action: "archive" as const,
+        reason: `superseded by "${u.supersededByTopic}"`,
+      })),
+    ];
+    return { unitsPruned: 0, unitsArchived: 0, pruneCandidates };
+  }
+
+  for (const u of stale) {
+    deleteKnowledgeUnit(db, u.id);
+  }
+  for (const u of superseded) {
+    archiveKnowledgeUnit(db, u.id, "superseded");
+    await appendArchivedBanner(outputDir, u.canonical_doc_path, u.supersededByTopic);
+  }
+
+  return { unitsPruned: stale.length, unitsArchived: superseded.length };
+}
+
+/**
+ * Prepend a short deprecation banner to an archived unit's canonical doc.
+ * The file itself is never deleted or moved — its path stays stable for
+ * anything already referencing it (team sync, a committed link) — only its
+ * content gains a notice pointing at the unit that superseded it.
+ */
+async function appendArchivedBanner(
+  outputDir: string,
+  docPath: string | null,
+  supersededByTopic: string
+): Promise<void> {
+  if (!docPath) return;
+  const filePath = join(outputDir, docPath);
+  const file = Bun.file(filePath);
+  if (!(await file.exists())) return; // doc already moved/removed outside Smriti — archive the DB row regardless
+
+  const content = await file.text();
+  const banner = `> **Archived** — superseded by "${supersededByTopic}".\n`;
+  const frontmatterMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+  const updated = frontmatterMatch
+    ? content.slice(0, frontmatterMatch[0].length) + "\n" + banner + content.slice(frontmatterMatch[0].length)
+    : banner + "\n" + content;
+
+  await Bun.write(filePath, updated);
 }
 
 // =============================================================================

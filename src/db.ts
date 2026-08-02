@@ -8,10 +8,10 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdirSync, existsSync } from "fs";
-import { dirname } from "path";
-import { QMD_DB_PATH, SMRITI_SESSIONS_DIR } from "./config";
-import { initializeMemoryTables } from "./qmd";
+import { mkdirSync, existsSync, unlinkSync } from "fs";
+import { dirname, join } from "path";
+import { QMD_DB_PATH, SMRITI_SESSIONS_DIR, SMRITI_DIR } from "./config";
+import { initializeMemoryTables, deleteSession, cleanupOrphanedMemoryVectors } from "./qmd";
 import { createStore } from "../qmd/src/index";
 import { setQmdStore, closeQmdStore } from "./store";
 import type { KnowledgeUnit } from "./team/types";
@@ -218,7 +218,7 @@ export function initializeSmritiTables(db: Database): void {
       plain_text TEXT NOT NULL,               -- raw Stage-1 extract
       line_ranges TEXT,                       -- JSON array of {start,end}
       content_hash TEXT NOT NULL,             -- hashContent({topic,category,plainText}) — Stage-1 dedup key
-      tier TEXT NOT NULL DEFAULT 'segmented', -- 'segmented' | 'canonical'
+      tier TEXT NOT NULL DEFAULT 'segmented', -- 'segmented' | 'canonical' | 'archived'
       retrieval_count INTEGER NOT NULL DEFAULT 0,
       last_recalled_at TEXT,
       promoted_at TEXT,
@@ -487,6 +487,21 @@ export function initializeSmritiTables(db: Database): void {
       DELETE FROM smriti_queries_fts WHERE rowid = old.id;
     END;
   `);
+
+  // Prune: 'archived' tier support on smriti_knowledge_units (no CHECK
+  // constraint on `tier`, so the new value needs no migration — only these
+  // two nullable columns, set when a canonical unit is archived because a
+  // `supersedes` edge points at it).
+  try {
+    db.exec(`ALTER TABLE smriti_knowledge_units ADD COLUMN archived_at TEXT`);
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE smriti_knowledge_units ADD COLUMN archived_reason TEXT`);
+  } catch {
+    // Column already exists
+  }
 }
 
 // =============================================================================
@@ -1160,6 +1175,31 @@ export function deleteSidecarRows(db: Database, sessionId: string): void {
   db.prepare(`DELETE FROM smriti_session_costs WHERE session_id = ?`).run(sessionId);
 }
 
+/**
+ * Full sidecar cleanup for a session forget — a superset of deleteSidecarRows
+ * (which `ingest --force` uses, needing only the narrower tool/file/command/
+ * error/cost set that gets re-derived on re-ingest). Also clears
+ * Smriti-specific metadata/content tables that didn't exist when
+ * deleteSidecarRows was written. Does NOT touch smriti_knowledge_units or
+ * smriti_shares — callers (forgetSession) handle those separately since
+ * canonical (promoted) units are kept unless purging shared knowledge.
+ */
+export function deleteAllSidecarRows(db: Database, sessionId: string): void {
+  deleteSidecarRows(db, sessionId);
+
+  db.prepare(
+    `DELETE FROM smriti_message_tags WHERE message_id IN (SELECT id FROM memory_messages WHERE session_id = ?)`
+  ).run(sessionId);
+  db.prepare(`DELETE FROM smriti_session_meta WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_session_tags WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_artifacts WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_thinking WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_attachments WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_voice_notes WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_session_queries WHERE session_id = ?`).run(sessionId);
+  db.prepare(`DELETE FROM smriti_session_clusters WHERE session_id = ?`).run(sessionId);
+}
+
 export function insertGitOperation(
   db: Database,
   messageId: number,
@@ -1330,12 +1370,14 @@ export interface StoredKnowledgeUnit {
   plain_text: string;
   line_ranges: Array<{ start: number; end: number }>;
   content_hash: string;
-  tier: "segmented" | "canonical";
+  tier: "segmented" | "canonical" | "archived";
   retrieval_count: number;
   last_recalled_at: string | null;
   promoted_at: string | null;
   canonical_doc_path: string | null;
   share_id: string | null;
+  archived_at: string | null;
+  archived_reason: string | null;
 }
 
 type KnowledgeUnitRow = {
@@ -1356,6 +1398,8 @@ type KnowledgeUnitRow = {
   promoted_at: string | null;
   canonical_doc_path: string | null;
   share_id: string | null;
+  archived_at: string | null;
+  archived_reason: string | null;
 };
 
 function deserializeKnowledgeUnit(row: KnowledgeUnitRow): StoredKnowledgeUnit {
@@ -1364,7 +1408,7 @@ function deserializeKnowledgeUnit(row: KnowledgeUnitRow): StoredKnowledgeUnit {
     entities: row.entities ? JSON.parse(row.entities) : [],
     files: row.files ? JSON.parse(row.files) : [],
     line_ranges: row.line_ranges ? JSON.parse(row.line_ranges) : [],
-    tier: row.tier as "segmented" | "canonical",
+    tier: row.tier as "segmented" | "canonical" | "archived",
   };
 }
 
@@ -1487,7 +1531,7 @@ export function promoteKnowledgeUnit(
 
 export function listKnowledgeUnits(
   db: Database,
-  options: { tier?: "segmented" | "canonical"; minRetrievals?: number; limit?: number } = {}
+  options: { tier?: "segmented" | "canonical" | "archived"; minRetrievals?: number; limit?: number } = {}
 ): StoredKnowledgeUnit[] {
   const conditions: string[] = [];
   const params: any[] = [];
@@ -1513,6 +1557,161 @@ export function listKnowledgeUnits(
     )
     .all(...params) as KnowledgeUnitRow[];
   return rows.map(deserializeKnowledgeUnit);
+}
+
+/** Cascade-delete relationship edges where this knowledge unit is subject or object. */
+function deleteKnowledgeUnitRelationships(db: Database, unitId: string): void {
+  db.prepare(
+    `DELETE FROM smriti_relationships WHERE subject_type = 'knowledge_unit' AND subject_id = ?`
+  ).run(unitId);
+  db.prepare(
+    `DELETE FROM smriti_relationships WHERE object_type = 'knowledge_unit' AND object_id = ?`
+  ).run(unitId);
+}
+
+/**
+ * Hard-delete a knowledge unit and its relationship edges. Shared by
+ * forgetSession (removing unpromoted units of a forgotten session) and
+ * pruneKnowledge (removing stale segmented units) — safe in both cases
+ * because a 'segmented' unit was never promoted, so nothing external
+ * (canonical doc, smriti_shares row) references it.
+ */
+export function deleteKnowledgeUnit(db: Database, unitId: string): void {
+  deleteKnowledgeUnitRelationships(db, unitId);
+  db.prepare(`DELETE FROM smriti_knowledge_units WHERE id = ?`).run(unitId);
+}
+
+/**
+ * Segmented units that failed both promotion paths — the relevance escape
+ * hatch mirrors findPromotableUnits' own minRelevance, so a unit one
+ * `consolidate` run away from promoting is never a prune candidate — and are
+ * old enough that they're unlikely to ever clear the bar.
+ */
+export function findStaleSegmentedUnits(
+  db: Database,
+  maxAgeDays: number,
+  minRelevance: number
+): StoredKnowledgeUnit[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM smriti_knowledge_units
+       WHERE tier = 'segmented' AND retrieval_count = 0 AND relevance < ?
+         AND created_at < datetime('now', '-' || ? || ' days')`
+    )
+    .all(minRelevance, maxAgeDays) as KnowledgeUnitRow[];
+  return rows.map(deserializeKnowledgeUnit);
+}
+
+/** Canonical units with an incoming `supersedes` edge (some other unit supersedes them) that aren't already archived. */
+export function findSupersededCanonicalUnits(
+  db: Database
+): Array<StoredKnowledgeUnit & { supersededByUnitId: string; supersededByTopic: string }> {
+  const rows = db
+    .prepare(
+      `SELECT ku.*, r.subject_id AS supersededByUnitId, super_ku.topic AS supersededByTopic
+       FROM smriti_knowledge_units ku
+       JOIN smriti_relationships r
+         ON r.object_type = 'knowledge_unit' AND r.object_id = ku.id AND r.predicate = 'supersedes'
+       JOIN smriti_knowledge_units super_ku ON super_ku.id = r.subject_id
+       WHERE ku.tier = 'canonical'`
+    )
+    .all() as Array<KnowledgeUnitRow & { supersededByUnitId: string; supersededByTopic: string }>;
+  return rows.map((r) => ({ ...deserializeKnowledgeUnit(r), supersededByUnitId: r.supersededByUnitId, supersededByTopic: r.supersededByTopic }));
+}
+
+/** Soft-archive a canonical unit — tier -> 'archived', archived_at/reason set. The unit's relationship edges (including the supersedes edge that justified this) are left untouched as the audit trail. */
+export function archiveKnowledgeUnit(db: Database, unitId: string, reason: string): void {
+  db.prepare(
+    `UPDATE smriti_knowledge_units
+     SET tier = 'archived', archived_at = datetime('now'), archived_reason = ?, updated_at = datetime('now')
+     WHERE id = ?`
+  ).run(reason, unitId);
+}
+
+// =============================================================================
+// Forget (session deletion)
+// =============================================================================
+
+export type ForgetOptions = {
+  /** Permanently delete instead of the default soft delete (active = 0). */
+  hard?: boolean;
+  /** Only meaningful with hard: true. Also delete canonical (promoted) units, their smriti_shares row, and their .smriti/knowledge/*.md doc — normally kept since they've already been shared. */
+  purgeShared?: boolean;
+  /** Where canonical docs live, for purgeShared's file deletion. Defaults to the same convention consolidateKnowledge uses. */
+  outputDir?: string;
+};
+
+export type ForgetResult = {
+  sessionId: string;
+  hard: boolean;
+  unitsDeleted: number; // unpromoted (segmented) knowledge units removed
+  unitsPurged: number; // canonical units removed, only when purgeShared
+  canonicalKept: number; // canonical units left in place
+};
+
+/**
+ * Forget a session. Soft delete (default) just flips memory_sessions.active
+ * to 0 — reversible, and already understood by `list --all`/`listSessions`.
+ * Hard delete removes messages, all sidecar rows, unpromoted knowledge
+ * units, and orphaned vector embeddings; canonical (promoted) units are kept
+ * unless purgeShared is set, since they may already be referenced outside
+ * this session (team sync, a committed .smriti/knowledge/ doc).
+ */
+export function forgetSession(
+  db: Database,
+  sessionId: string,
+  options: ForgetOptions = {}
+): ForgetResult {
+  const hard = options.hard ?? false;
+  const purgeShared = options.purgeShared ?? false;
+  const result: ForgetResult = {
+    sessionId,
+    hard,
+    unitsDeleted: 0,
+    unitsPurged: 0,
+    canonicalKept: 0,
+  };
+
+  if (!hard) {
+    deleteSession(db as any, sessionId, false);
+    return result;
+  }
+
+  const units = db
+    .prepare(
+      `SELECT id, tier, canonical_doc_path FROM smriti_knowledge_units WHERE session_id = ?`
+    )
+    .all(sessionId) as Array<{ id: string; tier: string; canonical_doc_path: string | null }>;
+
+  const outputDir = options.outputDir || join(process.cwd(), SMRITI_DIR);
+
+  for (const u of units) {
+    if (u.tier !== "canonical") {
+      deleteKnowledgeUnit(db, u.id);
+      result.unitsDeleted++;
+      continue;
+    }
+    if (!purgeShared) {
+      result.canonicalKept++;
+      continue;
+    }
+    deleteKnowledgeUnit(db, u.id);
+    db.prepare(`DELETE FROM smriti_shares WHERE unit_id = ?`).run(u.id);
+    if (u.canonical_doc_path) {
+      try {
+        unlinkSync(join(outputDir, u.canonical_doc_path));
+      } catch {
+        // Doc already gone or never written under this outputDir — fine.
+      }
+    }
+    result.unitsPurged++;
+  }
+
+  deleteAllSidecarRows(db, sessionId);
+  deleteSession(db as any, sessionId, true);
+  cleanupOrphanedMemoryVectors(db as any);
+
+  return result;
 }
 
 // =============================================================================

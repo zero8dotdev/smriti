@@ -10,6 +10,8 @@
     "dev": "bun --hot src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
     "test": "bun test --cwd ./test",
+    "eval:recall": "bun run test/eval/recall-quality.eval.ts",
+    "eval:relations": "bun run test/eval/relation-inference.eval.ts",
     "smriti": "bun src/index.ts",
     "bench:qmd": "bun run scripts/bench-qmd.ts --profile ci-small --out bench/results/ci-small.json --no-llm",
     "bench:qmd:repeat": "bun run scripts/bench-qmd-repeat.ts --profiles ci-small,small,medium --runs 3 --out bench/results/repeat-summary.json",

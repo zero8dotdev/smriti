@@ -257,6 +257,44 @@ export function clearAllSessions(db: Database, hard: boolean = false): number {
   }
 }
 
+/**
+ * Remove content_vectors/vectors_vec rows whose hash is no longer referenced
+ * by any memory message or active QMD document. Scoped deletion — unlike
+ * QMD's own cleanupOrphanedVectors (which only checks `documents` and would
+ * wipe every memory-message embedding, since messages aren't rows in
+ * `documents`). Called after a hard session delete; a no-op (returns 0) when
+ * the vector/document tables aren't present (e.g. sqlite-vec unavailable, or
+ * a minimal test schema that skipped createStore()).
+ */
+export function cleanupOrphanedMemoryVectors(db: Database): number {
+  try {
+    db.prepare(`SELECT 1 FROM vectors_vec LIMIT 0`).get();
+    db.prepare(`SELECT 1 FROM documents LIMIT 0`).get();
+    db.prepare(`SELECT 1 FROM content_vectors LIMIT 0`).get();
+  } catch {
+    return 0;
+  }
+
+  const orphanWhere = `
+    NOT EXISTS (SELECT 1 FROM memory_messages m WHERE m.hash = content_vectors.hash)
+    AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.hash = content_vectors.hash AND d.active = 1)
+  `;
+
+  const { c } = db
+    .prepare(`SELECT COUNT(*) as c FROM content_vectors WHERE ${orphanWhere}`)
+    .get() as { c: number };
+  if (c === 0) return 0;
+
+  db.exec(`
+    DELETE FROM vectors_vec WHERE hash_seq IN (
+      SELECT content_vectors.hash || '_' || content_vectors.seq FROM content_vectors WHERE ${orphanWhere}
+    )
+  `);
+  db.exec(`DELETE FROM content_vectors WHERE ${orphanWhere}`);
+
+  return c;
+}
+
 // =============================================================================
 // Message CRUD
 // =============================================================================

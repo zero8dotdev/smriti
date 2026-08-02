@@ -136,7 +136,7 @@ export function getUnitsForEntity(
        FROM smriti_relationships r
        JOIN smriti_knowledge_units ku ON ku.id = r.subject_id
        WHERE r.subject_type = 'knowledge_unit' AND r.object_type = 'entity'
-         AND r.predicate = 'mentions' AND r.object_id = ?
+         AND r.predicate = 'mentions' AND r.object_id = ? AND ku.tier != 'archived'
        ORDER BY ku.retrieval_count DESC, ku.relevance DESC`
     )
     .all(entityId) as Array<{
