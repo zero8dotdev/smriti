@@ -5,7 +5,7 @@
  * Used by segment.ts (Stage 1) and document.ts (Stage 2).
  */
 
-import { OLLAMA_HOST, OLLAMA_MODEL } from "../config";
+import { OLLAMA_HOST, requireOllamaModel } from "../config";
 
 export type OllamaOptions = {
   model?: string;
@@ -28,7 +28,7 @@ export async function callOllama(
   prompt: string,
   options: OllamaOptions = {}
 ): Promise<string> {
-  const model = options.model || OLLAMA_MODEL;
+  const model = requireOllamaModel(options.model);
   const temperature = options.temperature ?? 0.7;
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;

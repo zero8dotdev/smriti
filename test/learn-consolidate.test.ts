@@ -21,7 +21,11 @@ import {
   insertKnowledgeUnit,
   listKnowledgeUnits,
 } from "../src/db";
-import { consolidateKnowledge } from "../src/learn/consolidate";
+import {
+  consolidateKnowledge,
+  classifyRelationshipsTextFormat,
+  classifyRelationshipsToolCall,
+} from "../src/learn/consolidate";
 import { recall } from "../src/search/recall";
 import type { KnowledgeUnit } from "../src/team/types";
 
@@ -280,4 +284,144 @@ test("recall does not throw for sessions with no consolidated knowledge units", 
   ]);
 
   await expect(recall(db, "deploy process", { project: "untrackedproj" })).resolves.toBeDefined();
+});
+
+// =============================================================================
+// Relationship classification (text-format vs tool-call)
+// =============================================================================
+
+const RELATION_UNIT = { topic: "Post-filtering for vector search", category: "architecture/decision", plainText: "Switched to post-filtering." };
+const RELATION_CANDIDATES = [
+  { id: "cand-0", topic: "Pre-filtering for vector search", category: "architecture/decision", plain_text: "Decided to pre-filter." },
+  { id: "cand-1", topic: "Unrelated CSS fix", category: "bug/fix", plain_text: "Fixed a hover overlay." },
+];
+
+test("classifyRelationshipsTextFormat parses RELATION lines even without literal brackets", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () =>
+    new Response(JSON.stringify({ response: "RELATION 0: supersedes\nRELATION [1]: none" }), { status: 200 })
+  ) as any;
+
+  try {
+    const guesses = await classifyRelationshipsTextFormat(RELATION_UNIT, RELATION_CANDIDATES, "test-model");
+    expect(guesses).toEqual([
+      { index: 0, predicate: "supersedes" },
+      { index: 1, predicate: "none" },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("classifyRelationshipsTextFormat returns nothing parseable when the model drifts off-format", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () =>
+    new Response(JSON.stringify({ response: "I think candidate 0 is superseded by the new unit." }), { status: 200 })
+  ) as any;
+
+  try {
+    const guesses = await classifyRelationshipsTextFormat(RELATION_UNIT, RELATION_CANDIDATES, "test-model");
+    expect(guesses).toEqual([]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("classifyRelationshipsToolCall parses structured tool_calls output", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () =>
+    new Response(
+      JSON.stringify({
+        model: "test-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              function: {
+                name: "record_relationships",
+                arguments: {
+                  relationships: [
+                    { index: 0, predicate: "supersedes" },
+                    { index: 1, predicate: "none" },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+        done: true,
+      }),
+      { status: 200 }
+    )
+  ) as any;
+
+  try {
+    const guesses = await classifyRelationshipsToolCall(RELATION_UNIT, RELATION_CANDIDATES, "test-model");
+    expect(guesses).toEqual([
+      { index: 0, predicate: "supersedes" },
+      { index: 1, predicate: "none" },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("classifyRelationshipsToolCall drops entries with out-of-range indices or invalid predicates", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () =>
+    new Response(
+      JSON.stringify({
+        model: "test-model",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              function: {
+                name: "record_relationships",
+                arguments: {
+                  relationships: [
+                    { index: 0, predicate: "supersedes" },
+                    { index: 99, predicate: "relatesTo" },
+                    { index: 1, predicate: "maybe" },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+        done: true,
+      }),
+      { status: 200 }
+    )
+  ) as any;
+
+  try {
+    const guesses = await classifyRelationshipsToolCall(RELATION_UNIT, RELATION_CANDIDATES, "test-model");
+    expect(guesses).toEqual([{ index: 0, predicate: "supersedes" }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("classifyRelationshipsToolCall returns nothing when the model answers without calling the tool", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () =>
+    new Response(
+      JSON.stringify({
+        model: "test-model",
+        message: { role: "assistant", content: "Candidate 0 looks superseded." },
+        done: true,
+      }),
+      { status: 200 }
+    )
+  ) as any;
+
+  try {
+    const guesses = await classifyRelationshipsToolCall(RELATION_UNIT, RELATION_CANDIDATES, "test-model");
+    expect(guesses).toEqual([]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

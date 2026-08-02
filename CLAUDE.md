@@ -275,7 +275,7 @@ See `docs/internal/ingest-architecture.md` for details.
 | `COPILOT_STORAGE_DIR`       | auto-detected per OS        | VS Code workspaceStorage root override |
 | `SMRITI_PROJECTS_ROOT`      | `~/zero8.dev`               | Projects root for ID derivation        |
 | `OLLAMA_HOST`               | `http://127.0.0.1:11434`    | Ollama endpoint                        |
-| `QMD_MEMORY_MODEL`          | `qwen3:8b-tuned`            | Ollama model for synthesis             |
+| `QMD_MEMORY_MODEL`          | `qwen3.5:9b-mlx-tuned`      | Ollama model for synthesis (MLX engine)|
 | `SMRITI_CLASSIFY_THRESHOLD` | `0.5`                       | LLM classification trigger threshold   |
 | `SMRITI_AUTHOR`             | `$USER`                     | Git author for team sharing            |
 | `SMRITI_DAEMON_DEBOUNCE_MS` | `30000`                     | Daemon file-stability wait (v0.4.0)    |

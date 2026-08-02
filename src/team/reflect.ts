@@ -10,7 +10,7 @@
  *   2. src/team/prompts/share-reflect.md (built-in default)
  */
 
-import { OLLAMA_HOST, OLLAMA_MODEL } from "../config";
+import { OLLAMA_HOST, requireOllamaModel } from "../config";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { RawMessage } from "./formatter";
@@ -222,7 +222,7 @@ export async function synthesizeSession(
     const template = await loadPromptTemplate(options.projectSmritiDir);
     const prompt = template.replace("{{conversation}}", conversation);
 
-    const model = options.model || OLLAMA_MODEL;
+    const model = requireOllamaModel(options.model);
     const timeout = options.timeout || 120_000;
 
     const controller = new AbortController();

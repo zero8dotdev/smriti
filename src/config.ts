@@ -68,7 +68,18 @@ export const PROJECTS_ROOT =
 // =============================================================================
 
 export const OLLAMA_HOST = Bun.env.OLLAMA_HOST || "http://127.0.0.1:11434";
-export const OLLAMA_MODEL = Bun.env.QMD_MEMORY_MODEL || "qwen3:8b-tuned";
+export const OLLAMA_MODEL = Bun.env.QMD_MEMORY_MODEL;
+
+/** Resolve the Ollama model to use, preferring an explicit override. Throws if neither is set. */
+export function requireOllamaModel(explicit?: string): string {
+  const model = explicit || OLLAMA_MODEL;
+  if (!model) {
+    throw new Error(
+      "No Ollama model configured. Set QMD_MEMORY_MODEL in your environment or .env file."
+    );
+  }
+  return model;
+}
 
 /** Confidence threshold below which rule-based classification triggers LLM */
 export const CLASSIFY_LLM_THRESHOLD = Number(

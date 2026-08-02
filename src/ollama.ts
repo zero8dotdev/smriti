@@ -6,29 +6,40 @@
  *
  * Config via env:
  *   OLLAMA_HOST      - Ollama server URL (default: http://127.0.0.1:11434)
- *   QMD_MEMORY_MODEL - Model for summarization/synthesis (default: qwen3:8b-tuned)
+ *   QMD_MEMORY_MODEL - Model for summarization/synthesis (required, no default)
  */
 
-// =============================================================================
-// Configuration
-// =============================================================================
-
-const OLLAMA_HOST = Bun.env.OLLAMA_HOST || "http://127.0.0.1:11434";
-const DEFAULT_MEMORY_MODEL = Bun.env.QMD_MEMORY_MODEL || "qwen3:8b-tuned";
+import { OLLAMA_HOST, requireOllamaModel } from "./config";
 
 // =============================================================================
 // Types
 // =============================================================================
 
+export type OllamaToolCall = {
+  id?: string;
+  function: { name: string; arguments: Record<string, unknown> };
+};
+
 export type OllamaChatMessage = {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_calls?: OllamaToolCall[];
+};
+
+export type OllamaTool = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
 };
 
 export type OllamaChatOptions = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  tools?: OllamaTool[];
 };
 
 export type OllamaChatResponse = {
@@ -51,7 +62,7 @@ export async function ollamaChat(
   messages: OllamaChatMessage[],
   options: OllamaChatOptions = {}
 ): Promise<OllamaChatResponse> {
-  const model = options.model || DEFAULT_MEMORY_MODEL;
+  const model = requireOllamaModel(options.model);
   const resp = await fetch(`${OLLAMA_HOST}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -59,6 +70,7 @@ export async function ollamaChat(
       model,
       messages,
       stream: false,
+      ...(options.tools && { tools: options.tools }),
       options: {
         ...(options.temperature !== undefined && { temperature: options.temperature }),
         ...(options.maxTokens !== undefined && { num_predict: options.maxTokens }),
@@ -288,5 +300,3 @@ export async function ollamaHealthCheck(): Promise<{
     };
   }
 }
-
-export { DEFAULT_MEMORY_MODEL, OLLAMA_HOST };

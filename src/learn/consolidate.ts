@@ -30,6 +30,7 @@ import { segmentSession } from "../team/segment";
 import { generateDocument, generateFrontmatter } from "../team/document";
 import { isSessionWorthSharing } from "../team/formatter";
 import { callOllama } from "../team/ollama";
+import { ollamaChat, type OllamaTool } from "../ollama";
 import type { RawMessage } from "../team/formatter";
 import type { KnowledgeUnit } from "../team/types";
 import {
@@ -252,12 +253,39 @@ export async function consolidateKnowledge(
 // Relationship Inference (promote-time, LLM-gated)
 // =============================================================================
 
+const MAX_EXCERPT_CHARS = 800;
+
+export type RelationCandidate = { id: string; topic: string; category: string; plain_text: string };
+export type RelationGuess = { index: number; predicate: RelationshipPredicate | "none" };
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+function buildCandidateBlock(candidates: RelationCandidate[]): string {
+  return candidates
+    .map((c, i) => `[${i}] Topic: ${c.topic}\nCategory: ${c.category}\nContent: ${truncate(c.plain_text, MAX_EXCERPT_CHARS)}`)
+    .join("\n\n");
+}
+
+function buildComparisonPreamble(
+  unit: { topic: string; category: string; plainText: string },
+  candidates: RelationCandidate[]
+): string {
+  return `NEW UNIT
+Topic: ${unit.topic}
+Category: ${unit.category}
+Content: ${truncate(unit.plainText, MAX_EXCERPT_CHARS)}
+
+CANDIDATES
+${buildCandidateBlock(candidates)}`;
+}
+
 // Brackets optional: models reliably get the index and predicate right but
 // don't reliably reproduce "[i]" literally (observed: "RELATION 0: supersedes"
 // instead of "RELATION [0]: supersedes") — a strict bracket requirement here
 // silently drops otherwise-correct answers.
 const RELATION_LINE = /RELATION\s*\[?(\d+)\]?:\s*(relatesTo|supersedes|contradicts|none)/gi;
-const MAX_EXCERPT_CHARS = 800;
 
 // Case-insensitive regex match -> canonical camelCase predicate (avoid a blind
 // .toLowerCase() on the match, which would turn "relatesTo" into "relatesto").
@@ -267,8 +295,133 @@ const PREDICATE_BY_LOWERCASE: Record<string, RelationshipPredicate> = {
   contradicts: "contradicts",
 };
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) + "…" : text;
+/**
+ * Original approach: ask for free-text "RELATION [i]: predicate" lines and
+ * parse them with a regex. Kept only as the "before" baseline for the eval
+ * comparison against classifyRelationshipsToolCall — no longer wired into
+ * inferRelationships().
+ */
+export async function classifyRelationshipsTextFormat(
+  unit: { topic: string; category: string; plainText: string },
+  candidates: RelationCandidate[],
+  model?: string
+): Promise<RelationGuess[]> {
+  const prompt = `You are comparing a NEW knowledge unit against CANDIDATE units that already mention at least one of the same topics/entities.
+
+${buildComparisonPreamble(unit, candidates)}
+
+For each candidate, decide the relationship of the NEW unit to it:
+- relatesTo: related but neither replaces nor conflicts with the other
+- supersedes: the NEW unit replaces/updates the candidate's guidance
+- contradicts: the NEW unit conflicts with the candidate
+- none: no meaningful relationship
+
+Respond with exactly one line per candidate, in this format:
+RELATION [i]: relatesTo|supersedes|contradicts|none`;
+
+  const response = await callOllama(prompt, { model });
+
+  const guesses: RelationGuess[] = [];
+  for (const match of response.matchAll(RELATION_LINE)) {
+    const index = Number(match[1]);
+    const raw = match[2]!.toLowerCase();
+    const predicate = raw === "none" ? "none" : PREDICATE_BY_LOWERCASE[raw];
+    if (!predicate || !candidates[index]) continue;
+    guesses.push({ index, predicate });
+  }
+
+  // A non-empty response that yields zero parsed lines almost always means
+  // the model drifted from the expected format, not that every candidate
+  // was genuinely unrelated — surface it instead of promoting in silence.
+  if (guesses.length === 0 && response.trim().length > 0) {
+    console.warn(
+      `classifyRelationshipsTextFormat: parsed 0 relation lines from a non-empty response — response may not match the expected format:`,
+      truncate(response, 300)
+    );
+  }
+
+  return guesses;
+}
+
+const VALID_PREDICATES = new Set(["relatesTo", "supersedes", "contradicts", "none"]);
+
+const RECORD_RELATIONSHIPS_TOOL: OllamaTool = {
+  type: "function",
+  function: {
+    name: "record_relationships",
+    description:
+      "Record the relationship of the NEW knowledge unit to each CANDIDATE unit, one entry per candidate index.",
+    parameters: {
+      type: "object",
+      properties: {
+        relationships: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              index: {
+                type: "integer",
+                description: "The candidate's [i] index as shown in the CANDIDATES list",
+              },
+              predicate: {
+                type: "string",
+                enum: ["relatesTo", "supersedes", "contradicts", "none"],
+                description:
+                  "relatesTo: related but neither replaces nor conflicts; supersedes: NEW unit replaces/updates the candidate; contradicts: NEW unit conflicts with the candidate; none: no meaningful relationship",
+              },
+            },
+            required: ["index", "predicate"],
+          },
+        },
+      },
+      required: ["relationships"],
+    },
+  },
+};
+
+/**
+ * Ask the LLM to classify the NEW unit's relationship to each candidate via
+ * a native tool call instead of free-text lines — the model returns
+ * structured JSON directly, so there's no format to drift from and nothing
+ * to regex-parse.
+ */
+export async function classifyRelationshipsToolCall(
+  unit: { topic: string; category: string; plainText: string },
+  candidates: RelationCandidate[],
+  model?: string
+): Promise<RelationGuess[]> {
+  const prompt = `Compare the NEW knowledge unit against each CANDIDATE unit below, then call record_relationships with your assessment for every candidate index.
+
+${buildComparisonPreamble(unit, candidates)}`;
+
+  const resp = await ollamaChat([{ role: "user", content: prompt }], {
+    model,
+    tools: [RECORD_RELATIONSHIPS_TOOL],
+    temperature: 0.1,
+  });
+
+  const call = resp.message.tool_calls?.find((c) => c.function.name === "record_relationships");
+  if (!call) {
+    if (resp.message.content?.trim()) {
+      console.warn(
+        `classifyRelationshipsToolCall: model answered without calling record_relationships:`,
+        truncate(resp.message.content, 300)
+      );
+    }
+    return [];
+  }
+
+  const raw = call.function.arguments?.relationships;
+  if (!Array.isArray(raw)) return [];
+
+  const guesses: RelationGuess[] = [];
+  for (const entry of raw) {
+    const index = Number((entry as any)?.index);
+    const predicate = (entry as any)?.predicate;
+    if (!Number.isInteger(index) || !candidates[index] || !VALID_PREDICATES.has(predicate)) continue;
+    guesses.push({ index, predicate });
+  }
+  return guesses;
 }
 
 /**
@@ -280,44 +433,15 @@ function truncate(text: string, max: number): string {
 async function inferRelationships(
   db: Database,
   unit: KnowledgeUnit,
-  candidates: Array<{ id: string; topic: string; category: string; plain_text: string }>,
+  candidates: RelationCandidate[],
   model?: string
 ): Promise<void> {
   try {
-    const candidateBlock = candidates
-      .map((c, i) => `[${i}] Topic: ${c.topic}\nCategory: ${c.category}\nContent: ${truncate(c.plain_text, MAX_EXCERPT_CHARS)}`)
-      .join("\n\n");
+    const guesses = await classifyRelationshipsToolCall(unit, candidates, model);
 
-    const prompt = `You are comparing a NEW knowledge unit against CANDIDATE units that already mention at least one of the same topics/entities.
-
-NEW UNIT
-Topic: ${unit.topic}
-Category: ${unit.category}
-Content: ${truncate(unit.plainText, MAX_EXCERPT_CHARS)}
-
-CANDIDATES
-${candidateBlock}
-
-For each candidate, decide the relationship of the NEW unit to it:
-- relatesTo: related but neither replaces nor conflicts with the other
-- supersedes: the NEW unit replaces/updates the candidate's guidance
-- contradicts: the NEW unit conflicts with the candidate
-- none: no meaningful relationship
-
-Respond with exactly one line per candidate, in this format:
-RELATION [i]: relatesTo|supersedes|contradicts|none`;
-
-    const response = await callOllama(prompt, { model });
-
-    let matched = 0;
-    for (const match of response.matchAll(RELATION_LINE)) {
-      matched++;
-      const index = Number(match[1]);
-      const raw = match[2].toLowerCase();
-      if (raw === "none") continue;
-      const predicate = PREDICATE_BY_LOWERCASE[raw];
-      const candidate = candidates[index];
-      if (!predicate || !candidate) continue;
+    for (const { index, predicate } of guesses) {
+      if (predicate === "none") continue;
+      const candidate = candidates[index]!;
 
       // Directional predicates shouldn't hold in both directions for the same
       // pair. When two entity-sharing units are promoted in the same run,
@@ -337,16 +461,6 @@ RELATION [i]: relatesTo|supersedes|contradicts|none`;
       insertRelationship(db, "knowledge_unit", unit.id, predicate, "knowledge_unit", candidate.id, {
         source: "llm",
       });
-    }
-
-    // A non-empty response that yields zero parsed lines almost always means
-    // the model drifted from the expected format, not that every candidate
-    // was genuinely unrelated — surface it instead of promoting in silence.
-    if (matched === 0 && response.trim().length > 0) {
-      console.warn(
-        `inferRelationships: parsed 0 relation lines from a non-empty response for unit ${unit.id} — response may not match the expected format:`,
-        truncate(response, 300)
-      );
     }
   } catch {
     // Enrichment only — never block promotion on a failed/unparseable relation call.
