@@ -153,7 +153,7 @@ test("generateDocument creates valid result with mocked Ollama", async () => {
       lineRanges: [{ start: 0, end: 5 }],
     };
 
-    const result = await generateDocument(unit, "Token Expiry Bug Fix");
+    const result = await generateDocument(unit, "Token Expiry Bug Fix", { model: "test-model" });
 
     expect(result.unitId).toBe("unit-test-1");
     expect(result.category).toBe("bug/fix");
