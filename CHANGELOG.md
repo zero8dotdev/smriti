@@ -1,3 +1,48 @@
+## [0.9.2] - 2026-08-25
+
+### 🎯 Release Overview
+Bug-fix release. Two search failures that hit ordinary queries, and a
+concurrency crash between the daemon and foreground commands. No new features,
+no CLI changes, no migration required.
+
+### 🐛 Fixes
+
+#### Search no longer errors on punctuated queries
+- `smriti search node-llama-cpp` failed with `no such column: llama`;
+  `smriti search "qmd 2.8.3"` failed with `fts5: syntax error near "."`.
+  `searchFiltered` interpolated the raw query into the FTS5 MATCH expression,
+  so punctuation was parsed as FTS5 grammar rather than as text. Hyphenated
+  names are common in these transcripts, so this hit everyday searches.
+- The recall path had the matching defect more quietly: `buildMemoryFTS5Query`
+  stripped punctuation instead of splitting on it, collapsing `2026.4.10` to
+  `2026410` while the index held `2026`, `4`, `10`. Silent zero results.
+- Both paths now split on the boundaries the `porter unicode61` tokenizer
+  uses and AND the parts, so a query tokenizes the way the indexed text did.
+
+#### Daemon no longer races foreground commands into "database is locked"
+- `createStore()` runs the WAL migration and FTS trigger DDL before returning,
+  so the `busy_timeout` set on the returned handle arrived too late and that
+  DDL raced at bun:sqlite's default of 0. The daemon re-runs `createStore()`
+  per flush, so any overlap with a foreground `recall` / `embed` / `ingest`
+  failed on contact.
+- QMD's `openDatabase()` now owns both `busy_timeout` (120s default,
+  `QMD_SQLITE_BUSY_TIMEOUT` to override) and a retrying WAL migration.
+- Measured: six concurrent cold opens on one fresh DB went from **1/6**
+  succeeding to **6/6**.
+
+### 🔧 Dependencies
+- QMD submodule synced to upstream `v2.8.3` (155 commits, from `v2.1.0`).
+  Zero breaking changes to the APIs Smriti consumes. `content_vectors` gains
+  an `embed_fingerprint` column, populated automatically for new vectors;
+  existing embeddings are unaffected and no re-embed is needed.
+- QMD's embedding runtime moves to node-llama-cpp 3.20.0 (llama.cpp b10361).
+
+### 📝 Notes
+- `CHANGELOG.md` has no entries for 0.7.0 through 0.9.1; those releases were
+  tagged by the auto-release job but never written up here. `package.json` also
+  drifted — it still read `0.9.0` at the `v0.9.1` tag, because auto-release
+  tags without bumping the manifest. This release realigns them.
+
 ## [0.6.0] - 2026-03-14
 
 ### 🎯 Release Overview
