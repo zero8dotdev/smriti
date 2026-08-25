@@ -13,6 +13,7 @@ import {
   insertVoiceNote,
 } from "../src/db";
 import { searchFiltered, listSessions } from "../src/search/index";
+import { buildMemoryFTS5Query } from "../src/memory";
 
 let db: Database;
 
@@ -77,7 +78,8 @@ beforeAll(() => {
       ('s3', 'user', 'The login page has an error when submitting', 'h5', '${now}'),
       ('s3', 'assistant', 'Fixed the login bug by validating input', 'h6', '${now}'),
       ('s4', 'user', 'Help me build a tax calculator', 'h7', '${now}'),
-      ('s4', 'assistant', 'Here is a tax calculator implementation', 'h8', '${now}');
+      ('s4', 'assistant', 'Here is a tax calculator implementation', 'h8', '${now}'),
+      ('s1', 'user', 'Bumped qmd to 2026.4.10 using node-llama-cpp and sqlite-vec', 'h9', '${now}');
   `);
 
   // Insert sidecar content for s4 (claude-web session)
@@ -244,4 +246,34 @@ test("migrateFTSToV2 is idempotent", () => {
   // Data should still be intact
   const results = searchFiltered(db, "calculateTax");
   expect(results.length).toBeGreaterThan(0);
+});
+
+// Regression: user queries were interpolated into the FTS5 MATCH expression
+// verbatim, so punctuation was parsed as FTS5 grammar rather than tokenized.
+// "node-llama-cpp" raised `no such column: llama` and "2026.4.10" raised
+// `fts5: syntax error near "."`. Mirrors QMD upstream #563.
+
+test("searchFiltered matches hyphenated terms instead of erroring", () => {
+  const results = searchFiltered(db, "node-llama-cpp", { limit: 10 });
+  expect(results.length).toBeGreaterThan(0);
+  expect(results.some((r) => r.session_id === "s1")).toBe(true);
+});
+
+test("searchFiltered matches dotted version strings", () => {
+  const results = searchFiltered(db, "2026.4.10", { limit: 10 });
+  expect(results.length).toBeGreaterThan(0);
+  expect(results.some((r) => r.session_id === "s1")).toBe(true);
+});
+
+test("searchFiltered still narrows — punctuated queries are ANDed, not dropped", () => {
+  expect(searchFiltered(db, "sqlite-vec", { limit: 10 }).length).toBeGreaterThan(0);
+  expect(searchFiltered(db, "nothing-here-xyz", { limit: 10 }).length).toBe(0);
+});
+
+test("buildMemoryFTS5Query tokenizes on the same boundaries as the index", () => {
+  expect(buildMemoryFTS5Query("node-llama-cpp")).toBe('"node"* AND "llama"* AND "cpp"*');
+  expect(buildMemoryFTS5Query("2026.4.10")).toBe('"2026"* AND "4"* AND "10"*');
+  expect(buildMemoryFTS5Query("plain")).toBe('"plain"*');
+  expect(buildMemoryFTS5Query("   ")).toBe(null);
+  expect(buildMemoryFTS5Query("!!!")).toBe(null);
 });

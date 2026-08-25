@@ -147,17 +147,23 @@ export function initializeMemoryTables(db: Database): void {
 // FTS5 Query Building (same pattern as store.ts buildFTS5Query)
 // =============================================================================
 
-function sanitizeMemoryFTSTerm(term: string): string {
-  return term.replace(/[^\p{L}\p{N}']/gu, "").toLowerCase();
-}
-
-function buildMemoryFTS5Query(query: string): string | null {
+/**
+ * Build an FTS5 MATCH expression from a user query.
+ *
+ * Splits on everything the `porter unicode61` tokenizer treats as a boundary,
+ * so a query tokenizes the same way the indexed text did. Without this,
+ * punctuation either matched nothing ("2026.4.10" collapsed to "2026410", but
+ * the index holds "2026"/"4"/"10") or leaked into FTS5's own grammar
+ * ("node-llama-cpp" parsed "llama" as a column name).
+ *
+ * Exported so `searchFiltered` builds its MATCH the same way.
+ */
+export function buildMemoryFTS5Query(query: string): string | null {
   const terms = query
-    .split(/\s+/)
-    .map((t) => sanitizeMemoryFTSTerm(t))
+    .split(/[^\p{L}\p{N}']+/u)
+    .map((t) => t.toLowerCase())
     .filter((t) => t.length > 0);
   if (terms.length === 0) return null;
-  if (terms.length === 1) return `"${terms[0]}"*`;
   return terms.map((t) => `"${t}"*`).join(" AND ");
 }
 
