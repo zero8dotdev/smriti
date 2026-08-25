@@ -730,11 +730,12 @@ export async function initSmriti(dbPath?: string): Promise<Database> {
   setQmdStore(store);
   const db = store.internal.db as unknown as Database;
   _db = db;
-  // busy_timeout is per-connection, not persisted in the DB file — set it on
-  // every open. Without it, two processes opening the same SQLite file at
-  // once (e.g. the daemon's flush and a manual `smriti ingest --force`) fail
-  // immediately with "database is locked" instead of retrying briefly.
-  db.exec("PRAGMA busy_timeout = 5000");
+  // busy_timeout and WAL are set by QMD's openDatabase() inside createStore(),
+  // which is the only place that runs *before* the cold-open schema work
+  // (WAL migration, FTS trigger DDL). Setting them here instead was too late:
+  // that DDL raced with busy_timeout still at bun:sqlite's default of 0, so a
+  // daemon flush overlapping a foreground command failed on contact rather
+  // than queueing. Override with QMD_SQLITE_BUSY_TIMEOUT (ms) if needed.
   initializeMemoryTables(db as any);
   initializeSmritiTables(db);
   seedDefaults(db);
