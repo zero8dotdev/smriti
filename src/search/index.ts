@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { DEFAULT_SEARCH_LIMIT } from "../config";
 import { searchMemoryFTS, searchMemoryVec } from "../qmd";
+import { buildMemoryFTS5Query } from "../memory";
 
 // =============================================================================
 // Types
@@ -74,9 +75,15 @@ export function searchFiltered(
   const conditions: string[] = [];
   const params: any[] = [];
 
-  // FTS match condition with column filter
+  // FTS match condition with column filter. The query is tokenized the same
+  // way the index was (see buildMemoryFTS5Query) rather than interpolated raw
+  // — raw user input was parsed as FTS5 grammar, so "node-llama-cpp" failed
+  // with `no such column: llama` and "2.8.3" with `syntax error near "."`.
+  // Parenthesised so the column filter binds to the whole AND group.
+  const ftsQuery = buildMemoryFTS5Query(query);
+  if (!ftsQuery) return [];
   conditions.push(`memory_fts MATCH ?`);
-  params.push(`{${columns.join(" ")}} : ${query}`);
+  params.push(`{${columns.join(" ")}} : (${ftsQuery})`);
 
   // Category filter
   if (filters.category) {
