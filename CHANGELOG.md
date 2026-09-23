@@ -1,3 +1,22 @@
+## [0.9.3] - 2026-09-23
+
+### 🎯 Release Overview
+Internal CLI cutover. Every command now lives in `src/commands/` with
+declared args, flags, and help, and `src/index.ts` dispatches into that
+layer. No new commands, no migration, no change to stored data.
+
+### 🔧 Internal
+
+#### Command blueprint
+- Each command is a `BaseCommand` (`src/command.ts`) with its own help
+  contract (`src/help/types.ts`). `src/subcommand.ts` is the dispatcher
+  shape for commands that take named subcommands; nothing routes through
+  it yet.
+- `src/index.ts` unwraps `CommandResult` and keeps the existing
+  exit-on-error behavior. Agent parsers, the database, and the daemon
+  are untouched.
+- `formatSessionList` accepts a null session title.
+
 ## [0.9.2] - 2026-08-25
 
 ### 🎯 Release Overview
