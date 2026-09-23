@@ -65,6 +65,51 @@ import { ollamaAsk, ollamaDrift, ollamaCheckConflicts } from "./ollama";
 import { clusterSessions, getClusterSessionIds } from "./cluster";
 
 // =============================================================================
+// New command blueprint - read-only commands (cutover in progress)
+// =============================================================================
+import type { CommandResult } from "./command";
+import { StatusCommand, createRealStatusBackend } from "./commands/status";
+import { ListCommand, createRealListBackend } from "./commands/list";
+import { ShowCommand, createRealShowBackend } from "./commands/show";
+import { TagsCommand, createRealTagsBackend } from "./commands/tags";
+import { CategoriesCommand, CategoriesAddCommand, createRealCategoriesBackend } from "./commands/categories";
+import { ProjectsCommand, createRealProjectsBackend } from "./commands/projects";
+import { LearningsCommand, createRealLearningsBackend } from "./commands/learnings";
+import { GraphCommand, createRealGraphBackend } from "./commands/graph";
+import { TeamCommand, createRealTeamBackend } from "./commands/team";
+import { DigestCommand, createRealDigestBackend } from "./commands/digest";
+import { ClustersCommand, createRealClustersBackend } from "./commands/clusters";
+import {
+  InsightsCommand,
+  InsightsSessionCommand,
+  InsightsProjectCommand,
+  InsightsCostsCommand,
+  InsightsErrorsCommand,
+  InsightsToolsCommand,
+  createRealInsightsSessionBackend,
+  createRealInsightsProjectBackend,
+  createRealInsightsCostsBackend,
+  createRealInsightsErrorsBackend,
+  createRealInsightsToolsBackend,
+  createRealInsightsOverviewBackend,
+  createRealInsightsRecommendationsBackend,
+} from "./commands/insights";
+import { SearchCommand, createRealSearchBackend } from "./commands/search";
+import { RecallCommand, createRealRecallBackend } from "./commands/recall";
+import { AskCommand, createRealAskBackend } from "./commands/ask";
+import { DriftCommand, createRealDriftBackend } from "./commands/drift";
+import { CompareCommand, createRealCompareBackend } from "./commands/compare";
+import { IngestCommand, createRealIngestBackend } from "./commands/ingest";
+import { CategorizeCommand, createRealCategorizeBackend } from "./commands/categorize";
+import { TagCommand, createRealTagBackend } from "./commands/tag";
+import { EmbedCommand, createRealEmbedBackend } from "./commands/embed";
+import { ContextCommand, createRealContextBackend } from "./commands/context";
+import { SyncCommand, createRealSyncBackend } from "./commands/sync";
+import { ShareCommand, createRealShareBackend } from "./commands/share";
+import { ConsolidateCommand, createRealConsolidateBackend } from "./commands/consolidate";
+import { EnrichCommand, createRealEnrichBackend } from "./commands/enrich";
+
+// =============================================================================
 // Arg Parsing Helpers
 // =============================================================================
 
@@ -90,6 +135,19 @@ function getPositional(args: string[], index: number): string | undefined {
     pos++;
   }
   return undefined;
+}
+
+/**
+ * Unwraps a new-blueprint CommandResult: prints the error and exits 1 on
+ * failure, otherwise returns the data. Bridges the new BaseCommand.run()
+ * contract onto this file's existing process.exit(1)-on-error convention.
+ */
+async function unwrap<T>(result: CommandResult<T>): Promise<T> {
+  if (!result.ok) {
+    console.error(result.error.message);
+    process.exit(1);
+  }
+  return result.data;
 }
 
 // =============================================================================
@@ -381,49 +439,18 @@ async function main() {
       // INGEST
       // =====================================================================
       case "ingest": {
-        const agent = args[1];
-        if (!agent) {
-          console.error("Usage: smriti ingest <agent>");
-          console.error("Agents: claude, codex, cursor, cline, copilot, claude-web, file, all");
-          process.exit(1);
-        }
+        const result = await unwrap(
+          await new IngestCommand(createRealIngestBackend(db)).run({ argv: args.slice(1), json: false })
+        );
 
-        if (agent === "all") {
-          const results = await ingestAll(db, {
-            onProgress: (msg) => console.log(`  ${msg}`),
-          });
-          for (const r of results) {
+        if (Array.isArray(result)) {
+          for (const r of result) {
             console.log(formatIngestResult(r));
             console.log();
           }
-          break;
+        } else {
+          console.log(formatIngestResult(result));
         }
-
-        const filePath = args[2] && !args[2].startsWith("--") ? args[2] : getArg(args, "--file");
-        const isMarkdown = filePath?.endsWith(".md");
-        const whole = hasFlag(args, "--whole");
-
-        // Warn if .md file is being ingested without --whole
-        if (isMarkdown && !whole) {
-          console.warn(
-            "⚠️  Warning: ingesting .md file as chat format splits paragraphs into separate messages. " +
-              "Use --whole to store as a single document."
-          );
-        }
-
-        const result = await ingest(db, agent, {
-          onProgress: (msg) => console.log(`  ${msg}`),
-          projectPath: getArg(args, "--project-path"),
-          filePath,
-          format: getArg(args, "--format") as "chat" | "jsonl" | undefined,
-          title: getArg(args, "--title"),
-          sessionId: getArg(args, "--session"),
-          projectId: getArg(args, "--project"),
-          force: hasFlag(args, "--force"),
-          whole,
-        });
-
-        console.log(formatIngestResult(result));
         break;
       }
 
@@ -431,28 +458,10 @@ async function main() {
       // SEARCH
       // =====================================================================
       case "search": {
-        const query = args[1];
-        if (!query) {
-          console.error("Usage: smriti search <query> [filters]");
-          process.exit(1);
-        }
-
-        const results = searchFiltered(db, query, {
-          category: getArg(args, "--category"),
-          project: getArg(args, "--project"),
-          agent: getArg(args, "--agent"),
-          limit: Number(getArg(args, "--limit")) || undefined,
-          includeThinking: hasFlag(args, "--include-thinking"),
-          includeArtifacts: !hasFlag(args, "--no-artifacts"),
-          includeAttachments: !hasFlag(args, "--no-attachments"),
-          includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
-        });
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(results));
-        } else {
-          console.log(formatSearchResults(results));
-        }
+        // SearchCommand.execute() prints its own output (text/json).
+        await unwrap(
+          await new SearchCommand(createRealSearchBackend(db)).run({ argv: args.slice(1), json: hasFlag(args, "--json") })
+        );
         break;
       }
 
@@ -460,89 +469,44 @@ async function main() {
       // RECALL
       // =====================================================================
       case "recall": {
-        const query = args[1];
-        if (!query) {
-          console.error("Usage: smriti recall <query> [options]");
-          process.exit(1);
-        }
-
+        const isJson = hasFlag(args, "--json");
         const recallProject = getArg(args, "--project");
         const wideMode = hasFlag(args, "--wide");
-        const clusterFilter = getArg(args, "--cluster");
-        const clusterSessionIds = clusterFilter ? getClusterSessionIds(db, clusterFilter) : null;
 
-        if (clusterFilter && clusterSessionIds !== null && clusterSessionIds.length === 0) {
-          console.error(`No sessions found for cluster: ${clusterFilter}`);
-          console.error("Run 'smriti clusters' to see available clusters.");
-          process.exit(1);
-        }
+        const result = await unwrap(
+          await new RecallCommand(createRealRecallBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
 
-        const result = await recall(db, query, {
-          category: getArg(args, "--category"),
-          project: recallProject || undefined,
-          agent: getArg(args, "--agent"),
-          limit: Number(getArg(args, "--limit")) || undefined,
-          synthesize: hasFlag(args, "--synthesize"),
-          model: getArg(args, "--model"),
-          maxTokens: Number(getArg(args, "--max-tokens")) || undefined,
-          includeThinking: hasFlag(args, "--include-thinking"),
-          includeArtifacts: !hasFlag(args, "--no-artifacts"),
-          includeAttachments: !hasFlag(args, "--no-attachments"),
-          includeVoiceNotes: !hasFlag(args, "--no-voice-notes"),
-          fast: hasFlag(args, "--fast"),
-          wide: wideMode,
-        });
-
-        // Apply --cluster filter: keep only sessions belonging to the cluster
-        if (clusterSessionIds && clusterSessionIds.length > 0) {
-          const clusterSet = new Set(clusterSessionIds);
-          result.results = result.results.filter(r => clusterSet.has(r.session_id));
-        }
-
-        const checkConflicts = hasFlag(args, "--check-conflicts");
-
-        // In --wide mode, look up project info for cross-project badge
+        // Cross-project badge enrichment (--wide + --project): no home in
+        // RecallBackend (recallQuery only returns {results, synthesis}), so
+        // this stays here in the bridge, exactly as the original did it -
+        // a direct query against smriti_session_meta, not core recall logic.
         if (wideMode && recallProject && result.results.length > 0) {
-          const sessionIds = result.results.map(r => r.session_id);
+          const sessionIds = result.results.map((r) => r.session_id);
           const placeholders = sessionIds.map(() => "?").join(",");
-          const projRows = db.prepare(
-            `SELECT session_id, project_id FROM smriti_session_meta WHERE session_id IN (${placeholders})`
-          ).all(...sessionIds) as { session_id: string; project_id: string }[];
-          const projMap = new Map(projRows.map(r => [r.session_id, r.project_id]));
+          const projRows = db
+            .prepare(`SELECT session_id, project_id FROM smriti_session_meta WHERE session_id IN (${placeholders})`)
+            .all(...sessionIds) as { session_id: string; project_id: string }[];
+          const projMap = new Map(projRows.map((r) => [r.session_id, r.project_id]));
           for (const r of result.results) {
             const proj = projMap.get(r.session_id);
-            if (proj && proj !== recallProject && !(r as any).project) {
-              (r as any).project = proj;
+            if (proj && proj !== recallProject && !r.project) {
+              r.project = proj;
             }
           }
         }
 
-        // Contradiction detection (opt-in)
-        let conflicts: { pair: [number, number]; description: string }[] = [];
-        if (checkConflicts && result.results.length >= 2) {
-          const passages = result.results.slice(0, 5).map((r, i) => ({
-            n: i + 1,
-            title: r.session_title || r.session_id,
-            content: r.content,
-          }));
-          try {
-            conflicts = await ollamaCheckConflicts(query, passages);
-          } catch {
-            // Ollama unavailable — skip conflict detection
-          }
-        }
-
-        if (hasFlag(args, "--json")) {
-          console.log(json({ ...result, conflicts }));
+        if (isJson) {
+          console.log(json(result));
         } else {
           console.log(formatSearchResults(result.results));
           if (result.synthesis) {
             console.log("\n--- Synthesis ---\n");
             console.log(result.synthesis);
           }
-          if (conflicts.length > 0) {
+          if (result.conflicts.length > 0) {
             console.log("\n⚠  Conflicts detected:");
-            for (const c of conflicts) {
+            for (const c of result.conflicts) {
               const a = result.results[c.pair[0] - 1];
               const b = result.results[c.pair[1] - 1];
               console.log(`  [${c.pair[0]}] vs [${c.pair[1]}]: ${c.description}`);
@@ -560,66 +524,33 @@ async function main() {
       // ASK (RAG question-answering)
       // =====================================================================
       case "ask": {
-        const question = args[1];
-        if (!question) {
-          console.error('Usage: smriti ask "<question>" [options]');
-          process.exit(1);
-        }
-
+        const isJson = hasFlag(args, "--json");
         const noSynthesize = hasFlag(args, "--no-synthesize");
-        const askLimit = Number(getArg(args, "--limit")) || 5;
-        const askModel = getArg(args, "--model");
-        const askProject = getArg(args, "--project");
-        const askAgent = getArg(args, "--agent");
 
-        // Multi-angle recall (expandQuery + rerank already default-on)
-        const askResult = await recall(db, question, {
-          limit: askLimit,
-          synthesize: false,
-          project: askProject || undefined,
-          agent: askAgent || undefined,
-          fast: false,
-        });
+        const result = await unwrap(
+          await new AskCommand(createRealAskBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
 
-        if (hasFlag(args, "--json")) {
-          const sources = askResult.results.map((r, i) => ({
-            n: i + 1,
-            session_id: r.session_id,
-            session_title: r.session_title,
-            score: r.score,
-            content: r.content,
-          }));
-          console.log(json({ question, sources }));
+        if (isJson) {
+          console.log(json({ question: result.question, sources: result.sources }));
           break;
         }
 
-        if (noSynthesize || askResult.results.length === 0) {
-          console.log(formatSearchResults(askResult.results));
+        if (noSynthesize || result.results.length === 0) {
+          console.log(formatSearchResults(result.results));
           break;
         }
 
-        // Format sources for Ollama
-        const sourcesText = askResult.results
-          .map((r, i) => `[${i + 1}] ${r.session_title || r.session_id}\n${r.content}`)
-          .join("\n\n---\n\n");
-
-        let answer: string | undefined;
-        try {
-          answer = await ollamaAsk(question, sourcesText, { model: askModel || undefined });
-        } catch {
-          answer = undefined;
-        }
-
-        if (answer) {
-          console.log(answer);
+        if (result.answer) {
+          console.log(result.answer);
           console.log("\nSources:");
-          askResult.results.forEach((r, i) => {
+          result.results.forEach((r, i) => {
             const date = r.session_id ? new Date(r.session_id).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
             console.log(`  [${i + 1}] ${r.session_id} — ${r.session_title || "(untitled)"}${date ? ` (${date})` : ""}`);
           });
         } else {
           console.log("(Ollama unavailable — returning sources)\n");
-          console.log(formatSearchResults(askResult.results));
+          console.log(formatSearchResults(result.results));
         }
 
         break;
@@ -629,15 +560,10 @@ async function main() {
       // CATEGORIZE
       // =====================================================================
       case "categorize": {
-        const sessionId = getArg(args, "--session");
-        const useLLM = hasFlag(args, "--llm");
-
         console.log("Categorizing...");
-        const result = await categorizeUncategorized(db, {
-          sessionId,
-          useLLM,
-          onProgress: (msg) => console.log(`  ${msg}`),
-        });
+        const result = await unwrap(
+          await new CategorizeCommand(createRealCategorizeBackend(db)).run({ argv: args.slice(1), json: false })
+        );
 
         console.log(`Categorized: ${result.categorized}`);
         console.log(`Skipped: ${result.skipped}`);
@@ -648,21 +574,16 @@ async function main() {
       // TAG
       // =====================================================================
       case "tag": {
-        const sessionId = args[1];
-        const categoryId = args[2];
-        if (!sessionId || !categoryId) {
-          console.error("Usage: smriti tag <session-id> <category>");
-          process.exit(1);
-        }
+        const isJson = hasFlag(args, "--json");
+        const result = await unwrap(
+          await new TagCommand(createRealTagBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
 
-        if (!isValidCategory(db, categoryId)) {
-          console.error(`Invalid category: ${categoryId}`);
-          console.error("Run 'smriti categories' to see available categories.");
-          process.exit(1);
+        if (isJson) {
+          console.log(json(result));
+        } else {
+          console.log(`Tagged session ${result.sessionId} with ${result.categoryId}`);
         }
-
-        tagSession(db, sessionId, categoryId, 1.0, "manual");
-        console.log(`Tagged session ${sessionId} with ${categoryId}`);
         break;
       }
 
@@ -726,35 +647,27 @@ async function main() {
       // =====================================================================
       case "categories": {
         if (args[1] === "add") {
-          const id = args[2];
-          const name = getArg(args, "--name");
-          const parentId = getArg(args, "--parent");
-          const description = getArg(args, "--description");
-
-          if (!id || !name) {
-            console.error(
-              "Usage: smriti categories add <id> --name <name> [--parent <parent>] [--description <desc>]"
-            );
-            process.exit(1);
-          }
-
-          addCategory(db, id, name, parentId, description);
-          console.log(`Added category: ${id} (${name})`);
+          const added = await unwrap(
+            await new CategoriesAddCommand(createRealCategoriesBackend(db)).run({
+              argv: args.slice(2),
+              json: hasFlag(args, "--json"),
+            })
+          );
+          console.log(`Added category: ${added.id} (${added.name})`);
           break;
         }
 
-        const tree = getCategoryTree(db);
-        const allCats = getCategories(db);
-        console.log(
-          formatCategoryTree(
-            tree,
-            allCats.map((c) => ({
-              id: c.id,
-              name: c.name,
-              description: c.description,
-            }))
-          )
+        const data = await unwrap(
+          await new CategoriesCommand(createRealCategoriesBackend(db)).run({ argv: args.slice(1), json: hasFlag(args, "--json") })
         );
+        const lines: string[] = [];
+        for (const node of data.tree) {
+          lines.push(`${node.id} - ${node.description || node.name}`);
+          for (const child of node.children) {
+            lines.push(`  ${child.id} - ${child.description || child.name}`);
+          }
+        }
+        console.log(lines.join("\n"));
         break;
       }
 
@@ -762,38 +675,10 @@ async function main() {
       // TAGS
       // =====================================================================
       case "tags": {
-        const showAvailable = hasFlag(args, "--available");
-
-        if (showAvailable) {
-          // Show all available categories (same as categories command)
-          const tree = getCategoryTree(db);
-          const allCats = getCategories(db);
-          console.log(
-            formatCategoryTree(
-              tree,
-              allCats.map((c) => ({
-                id: c.id,
-                name: c.name,
-                description: c.description,
-              }))
-            )
-          );
-          break;
-        }
-
-        // Show tag usage
-        const projectFilter = getArg(args, "--project");
-        const usage = getTagUsage(db, projectFilter);
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(usage));
-        } else {
-          console.log(formatTagUsage(usage, projectFilter));
-          if (usage.length > 0) {
-            console.log("");
-            console.log("Run 'smriti tags --available' to see all available categories.");
-          }
-        }
+        // TagsCommand.execute() prints its own output (both modes, text/json).
+        await unwrap(
+          await new TagsCommand(createRealTagsBackend(db)).run({ argv: args.slice(1), json: hasFlag(args, "--json") })
+        );
         break;
       }
 
@@ -801,14 +686,12 @@ async function main() {
       // CONTEXT
       // =====================================================================
       case "context": {
-        const result = await generateContext(db, {
-          project: getArg(args, "--project"),
-          days: Number(getArg(args, "--days")) || undefined,
-          dryRun: hasFlag(args, "--dry-run"),
-          json: hasFlag(args, "--json"),
-        });
+        const isJson = hasFlag(args, "--json");
+        const result = await unwrap(
+          await new ContextCommand(createRealContextBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
 
-        if (hasFlag(args, "--json")) {
+        if (isJson) {
           console.log(json(result));
         } else if (result.written) {
           console.log(result.context);
@@ -826,49 +709,11 @@ async function main() {
       // COMPARE
       // =====================================================================
       case "compare": {
-        let idA: string | null = null;
-        let idB: string | null = null;
-
-        if (hasFlag(args, "--last")) {
-          // Compare last 2 sessions for the detected project
-          const projectId = getArg(args, "--project") || (() => {
-            const { detectProject } = require("./context");
-            return detectProject(db);
-          })();
-          const recent = recentSessionIds(db, 2, projectId);
-          if (recent.length < 2) {
-            console.error("Need at least 2 sessions to compare. Run 'smriti ingest' first.");
-            process.exit(1);
-          }
-          idA = recent[1]; // older
-          idB = recent[0]; // newer
-        } else {
-          const rawA = args[1];
-          const rawB = args[2];
-          if (!rawA || !rawB) {
-            console.error("Usage: smriti compare <session-a> <session-b>");
-            console.error("       smriti compare --last [--project <id>]");
-            process.exit(1);
-          }
-          idA = resolveSessionId(db, rawA);
-          idB = resolveSessionId(db, rawB);
-          if (!idA) {
-            console.error(`Could not resolve session: ${rawA}`);
-            process.exit(1);
-          }
-          if (!idB) {
-            console.error(`Could not resolve session: ${rawB}`);
-            process.exit(1);
-          }
-        }
-
-        const result = compareSessions(db, idA!, idB!);
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(result));
-        } else {
-          console.log(formatCompare(result));
-        }
+        const isJson = hasFlag(args, "--json");
+        const result = await unwrap(
+          await new CompareCommand(createRealCompareBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
+        console.log(isJson ? json(result) : formatCompare(result));
         break;
       }
 
@@ -876,16 +721,9 @@ async function main() {
       // SHARE
       // =====================================================================
       case "share": {
-        const result = await shareKnowledge(db, {
-          category: getArg(args, "--category"),
-          project: getArg(args, "--project"),
-          sessionId: getArg(args, "--session"),
-          outputDir: getArg(args, "--output"),
-          reflect: !hasFlag(args, "--no-reflect"),
-          reflectModel: getArg(args, "--reflect-model"),
-          segmented: hasFlag(args, "--segmented"),
-          minRelevance: Number(getArg(args, "--min-relevance")) || undefined,
-        });
+        const result = await unwrap(
+          await new ShareCommand(createRealShareBackend(db)).run({ argv: args.slice(1), json: false })
+        );
 
         console.log(formatShareResult(result));
         break;
@@ -897,19 +735,9 @@ async function main() {
       case "consolidate": {
         const prune = hasFlag(args, "--prune");
         const pruneApply = hasFlag(args, "--yes") || hasFlag(args, "--apply");
-        const result = await consolidateKnowledge(db, {
-          minDensity: Number(getArg(args, "--min-density")) || undefined,
-          minRetrievals: Number(getArg(args, "--min-retrievals")) || undefined,
-          minRelevance: Number(getArg(args, "--min-relevance")) || undefined,
-          minEntityReach: Number(getArg(args, "--min-entity-reach")) || undefined,
-          model: getArg(args, "--model"),
-          outputDir: getArg(args, "--output"),
-          sessionLimit: Number(getArg(args, "--session-limit")) || undefined,
-          prune,
-          pruneStaleDays: Number(getArg(args, "--prune-stale-days")) || undefined,
-          pruneApply,
-          onProgress: (msg) => console.log(`  ${msg}`),
-        });
+        const result = await unwrap(
+          await new ConsolidateCommand(createRealConsolidateBackend(db)).run({ argv: args.slice(1), json: false })
+        );
 
         console.log(formatConsolidateResult(result));
         if (prune && !pruneApply && result.pruneCandidates && result.pruneCandidates.length > 0) {
@@ -922,17 +750,11 @@ async function main() {
       // LEARNINGS
       // =====================================================================
       case "learnings": {
-        const units = listKnowledgeUnits(db, {
-          tier: getArg(args, "--tier") as "segmented" | "canonical" | undefined,
-          minRetrievals: Number(getArg(args, "--min-retrievals")) || undefined,
-          limit: Number(getArg(args, "--limit")) || 50,
-        });
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(units));
-        } else {
-          console.log(formatLearnings(units));
-        }
+        const isJson = hasFlag(args, "--json");
+        const units = await unwrap(
+          await new LearningsCommand(createRealLearningsBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
+        console.log(isJson ? json(units) : formatLearnings(units));
         break;
       }
 
@@ -940,30 +762,16 @@ async function main() {
       // GRAPH
       // =====================================================================
       case "graph": {
-        const query = getPositional(args, 1);
-        if (!query) {
-          console.error("Usage: smriti graph <entity>");
-          process.exit(1);
-        }
-
-        const entity = findEntity(db, query);
-        if (!entity) {
+        const isJson = hasFlag(args, "--json");
+        const data = await unwrap(
+          await new GraphCommand(createRealGraphBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
+        if (!data.entity) {
+          const query = getPositional(args, 1);
           console.log(`No entity found matching "${query}".`);
           break;
         }
-
-        const units = getUnitsForEntity(db, entity.id);
-        const unitIds = new Set(units.map((u) => u.id));
-        const edges = units.flatMap((u) =>
-          getRelationships(db, { subjectType: "knowledge_unit", subjectId: u.id })
-            .filter((r) => r.predicate !== "mentions" && unitIds.has(r.object_id))
-        );
-
-        if (hasFlag(args, "--json")) {
-          console.log(json({ entity, units, edges }));
-        } else {
-          console.log(formatEntityGraph(entity, units, edges));
-        }
+        console.log(isJson ? json(data) : formatEntityGraph(data.entity, data.units, data.edges));
         break;
       }
 
@@ -971,10 +779,9 @@ async function main() {
       // SYNC
       // =====================================================================
       case "sync": {
-        const result = await syncTeamKnowledge(db, {
-          inputDir: getArg(args, "--input"),
-          project: getArg(args, "--project"),
-        });
+        const result = await unwrap(
+          await new SyncCommand(createRealSyncBackend(db)).run({ argv: args.slice(1), json: false })
+        );
 
         console.log(formatSyncResult(result));
         break;
@@ -984,8 +791,11 @@ async function main() {
       // TEAM
       // =====================================================================
       case "team": {
-        const contributions = listTeamContributions(db);
-        console.log(formatTeamContributions(contributions));
+        // Original never branches on --json for this command - faithfully unchanged.
+        const data = await unwrap(
+          await new TeamCommand(createRealTeamBackend(db)).run({ argv: args.slice(1), json: hasFlag(args, "--json") })
+        );
+        console.log(formatTeamContributions(data.contributions));
         break;
       }
 
@@ -993,19 +803,11 @@ async function main() {
       // LIST
       // =====================================================================
       case "list": {
-        const sessions = listSessions(db, {
-          category: getArg(args, "--category"),
-          project: getArg(args, "--project"),
-          agent: getArg(args, "--agent"),
-          limit: Number(getArg(args, "--limit")) || undefined,
-          includeInactive: hasFlag(args, "--all"),
-        });
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(sessions));
-        } else {
-          console.log(formatSessionList(sessions));
-        }
+        const isJson = hasFlag(args, "--json");
+        const data = await unwrap(
+          await new ListCommand(createRealListBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
+        console.log(isJson ? json(data.sessions) : formatSessionList(data.sessions));
         break;
       }
 
@@ -1013,32 +815,20 @@ async function main() {
       // SHOW
       // =====================================================================
       case "show": {
-        const sessionId = args[1];
-        if (!sessionId) {
-          console.error("Usage: smriti show <session-id>");
-          process.exit(1);
-        }
-
-        const session = getSession(db, sessionId);
-        if (!session) {
-          console.error(`Session not found: ${sessionId}`);
-          process.exit(1);
-        }
-
-        console.log(`Session: ${session.title || session.id}`);
-        console.log(`Created: ${session.created_at}`);
-        if (session.summary) {
-          console.log(`Summary: ${session.summary}`);
+        const isJson = hasFlag(args, "--json");
+        const data = await unwrap(
+          await new ShowCommand(createRealShowBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
+        console.log(`Session: ${data.session.title || data.session.id}`);
+        console.log(`Created: ${data.session.created_at}`);
+        if (data.session.summary) {
+          console.log(`Summary: ${data.session.summary}`);
         }
         console.log("---");
-
-        const limit = Number(getArg(args, "--limit")) || undefined;
-        const messages = getMessages(db, sessionId, { limit });
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(messages));
+        if (isJson) {
+          console.log(json(data.messages));
         } else {
-          for (const msg of messages) {
+          for (const msg of data.messages) {
             console.log(`\n${msg.role}: ${msg.content}`);
           }
         }
@@ -1049,68 +839,11 @@ async function main() {
       // STATUS
       // =====================================================================
       case "status": {
-        const baseStatus = getMemoryStatus(db);
-        const projectFilter = getArg(args, "--project");
-
-        // Get Smriti-specific counts
-        const agentCounts: Record<string, number> = {};
-        const agentQuery = projectFilter
-          ? `SELECT sm.agent_id, COUNT(*) as count FROM smriti_session_meta sm
-             WHERE sm.agent_id IS NOT NULL AND sm.project_id = ?
-             GROUP BY sm.agent_id`
-          : `SELECT agent_id, COUNT(*) as count FROM smriti_session_meta
-             WHERE agent_id IS NOT NULL GROUP BY agent_id`;
-        const agentRows = (
-          projectFilter
-            ? db.prepare(agentQuery).all(projectFilter)
-            : db.prepare(agentQuery).all()
-        ) as { agent_id: string; count: number }[];
-        for (const row of agentRows) {
-          agentCounts[row.agent_id] = row.count;
-        }
-
-        const projectCounts: Record<string, number> = {};
-        if (!projectFilter) {
-          const projectRows = db
-            .prepare(
-              `SELECT project_id, COUNT(*) as count FROM smriti_session_meta
-               WHERE project_id IS NOT NULL GROUP BY project_id`
-            )
-            .all() as { project_id: string; count: number }[];
-          for (const row of projectRows) {
-            projectCounts[row.project_id] = row.count;
-          }
-        }
-
-        const categoryCounts: Record<string, number> = {};
-        const catQuery = projectFilter
-          ? `SELECT st.category_id, COUNT(*) as count FROM smriti_session_tags st
-             JOIN smriti_session_meta sm ON st.session_id = sm.session_id
-             WHERE sm.project_id = ?
-             GROUP BY st.category_id ORDER BY count DESC`
-          : `SELECT category_id, COUNT(*) as count FROM smriti_session_tags
-             GROUP BY category_id ORDER BY count DESC`;
-        const catRows = (
-          projectFilter
-            ? db.prepare(catQuery).all(projectFilter)
-            : db.prepare(catQuery).all()
-        ) as { category_id: string; count: number }[];
-        for (const row of catRows) {
-          categoryCounts[row.category_id] = row.count;
-        }
-
-        const output = { ...baseStatus, agentCounts, projectCounts, categoryCounts };
-        if (projectFilter && !hasFlag(args, "--json")) {
-          (output as any).projectFilter = projectFilter;
-        }
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(output));
-        } else {
-          console.log(
-            formatStatus(output as any)
-          );
-        }
+        const isJson = hasFlag(args, "--json");
+        const data = await unwrap(
+          await new StatusCommand(createRealStatusBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
+        console.log(isJson ? json(data) : formatStatus(data));
         break;
       }
 
@@ -1118,36 +851,33 @@ async function main() {
       // PROJECTS
       // =====================================================================
       case "projects": {
-        // Check if a project ID is specified (inspect single project)
-        const projectId = args[1];
-        if (projectId && !projectId.startsWith("--")) {
-          const report = getProjectReport(db, projectId);
-          if (!report) {
-            console.error(`Project not found: ${projectId}`);
-            process.exit(1);
-          }
+        const isJson = hasFlag(args, "--json");
+        const data = await unwrap(
+          await new ProjectsCommand(createRealProjectsBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
 
-          if (hasFlag(args, "--json")) {
-            console.log(json(report));
+        if ("report" in data) {
+          if (isJson) {
+            console.log(json(data.report));
           } else {
-            const tagsOnly = hasFlag(args, "--tags");
-            const decisionsOnly = hasFlag(args, "--decisions");
-            console.log(formatProjectReport(report, { tagsOnly, decisionsOnly }));
+            console.log(
+              formatProjectReport(data.report, {
+                tagsOnly: data.format === "tags",
+                decisionsOnly: data.format === "decisions",
+              })
+            );
           }
           break;
         }
 
-        // List all projects
-        const projects = listProjects(db);
-        if (projects.length === 0) {
+        if (data.projects.length === 0) {
           console.log("No projects registered. Run 'smriti ingest' first.");
           break;
         }
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(projects));
+        if (isJson) {
+          console.log(json(data.projects));
         } else {
-          for (const p of projects) {
+          for (const p of data.projects) {
             console.log(`${p.id} - ${p.path || "(no path)"}`);
             if (p.description) console.log(`  ${p.description}`);
           }
@@ -1160,11 +890,11 @@ async function main() {
       // =====================================================================
       case "embed": {
         console.log("Embedding new messages...");
-        const count = await embedMemoryMessages(db, {
-          onProgress: (msg: string) => console.log(`  ${msg}`),
-        });
+        const result = await unwrap(
+          await new EmbedCommand(createRealEmbedBackend(db)).run({ argv: args.slice(1), json: false })
+        );
 
-        console.log(`Embedded ${count} new messages.`);
+        console.log(`Embedded ${result.count} new messages.`);
         break;
       }
 
@@ -1273,50 +1003,40 @@ async function main() {
         const useJson = hasFlag(args, "--json");
 
         if (sub === "session") {
-          const id = args[2];
-          if (!id) {
-            console.error("Usage: smriti insights session <session-id>");
-            process.exit(1);
-          }
-          const report = getSessionInsights(db, id);
-          if (!report) {
-            console.error(`Session not found: ${id}`);
-            process.exit(1);
-          }
+          const report = await unwrap(
+            await new InsightsSessionCommand(createRealInsightsSessionBackend(db)).run({ argv: args.slice(2), json: useJson })
+          );
           console.log(useJson ? json(report) : formatSessionInsights(report));
         } else if (sub === "project") {
-          const id = args[2];
-          if (!id) {
-            console.error("Usage: smriti insights project <project-id>");
-            process.exit(1);
-          }
-          const report = getProjectInsights(db, id);
-          if (!report) {
-            console.error(`Project not found or has no data: ${id}`);
-            process.exit(1);
-          }
+          const report = await unwrap(
+            await new InsightsProjectCommand(createRealInsightsProjectBackend(db)).run({ argv: args.slice(2), json: useJson })
+          );
           console.log(useJson ? json(report) : formatProjectInsights(report));
         } else if (sub === "costs") {
-          const days = Number(getArg(args, "--days")) || undefined;
-          const report = getCostBreakdown(db, { days });
+          const report = await unwrap(
+            await new InsightsCostsCommand(createRealInsightsCostsBackend(db)).run({ argv: args.slice(2), json: useJson })
+          );
           console.log(useJson ? json(report) : formatCostBreakdown(report));
         } else if (sub === "errors") {
-          const project = getArg(args, "--project");
-          const report = getErrorAnalysis(db, { project });
+          const report = await unwrap(
+            await new InsightsErrorsCommand(createRealInsightsErrorsBackend(db)).run({ argv: args.slice(2), json: useJson })
+          );
           console.log(useJson ? json(report) : formatErrorAnalysis(report));
         } else if (sub === "tools") {
-          const project = getArg(args, "--project");
-          const report = getToolStats(db, { project });
+          const report = await unwrap(
+            await new InsightsToolsCommand(createRealInsightsToolsBackend(db)).run({ argv: args.slice(2), json: useJson })
+          );
           console.log(useJson ? json(report) : formatToolStats(report));
         } else {
-          // Default: full dashboard
-          const overview = getOverview(db);
-          const recs = getRecommendations(db);
-          if (useJson) {
-            console.log(json({ ...overview, recommendations: recs }));
-          } else {
-            console.log(formatOverview(overview, recs));
-          }
+          // Default: full dashboard. Matches the real CLI's lenient dispatch -
+          // any unrecognized sub (not just an absent one) falls through here too.
+          const result = await unwrap(
+            await new InsightsCommand(
+              createRealInsightsOverviewBackend(db),
+              createRealInsightsRecommendationsBackend(db)
+            ).run({ argv: args.slice(1), json: useJson })
+          );
+          console.log(useJson ? json(result) : formatOverview(result, result.recommendations));
         }
         break;
       }
@@ -1325,105 +1045,11 @@ async function main() {
       // ENRICH
       // =====================================================================
       case "enrich": {
-        const density = hasFlag(args, "--density");
-        const queries = hasFlag(args, "--queries");
-        const clusters = hasFlag(args, "--clusters");
-        const sessionFilter = getArg(args, "--session");
-        const projectFilter = getArg(args, "--project");
-        const dryRun = hasFlag(args, "--dry-run");
-
-        if (!density && !queries && !clusters) {
-          console.error("Usage: smriti enrich --density | --queries | --clusters [--session <id>] [--project <id>] [--dry-run]");
-          process.exit(1);
-        }
-
-        if (density) {
-          // Backfill density scores for all (or one) session
-          let sessionIds: string[];
-          if (sessionFilter) {
-            sessionIds = [sessionFilter];
-          } else {
-            sessionIds = (
-              db.prepare(`SELECT session_id FROM smriti_session_meta`).all() as { session_id: string }[]
-            ).map((r) => r.session_id);
-          }
-
-          console.log(`Computing density scores for ${sessionIds.length} session${sessionIds.length === 1 ? "" : "s"}...`);
-          let updated = 0;
-          for (const sid of sessionIds) {
-            const breakdown = computeDensityScore(db, sid);
-            updateDensityScore(db, sid, breakdown.score);
-            updated++;
-            if (sessionFilter) {
-              console.log(formatDensityBreakdown(breakdown));
-            }
-          }
-          if (!sessionFilter) {
-            console.log(`Updated ${updated} density scores.`);
-          }
-        }
-
-        if (queries) {
-          const { getQmdStore } = await import("./store");
-          const sessionIds = sessionFilter
-            ? [sessionFilter]
-            : getUnenrichedSessionIds(db, projectFilter || undefined);
-
-          console.log(`Enriching ${sessionIds.length} session${sessionIds.length === 1 ? "" : "s"} with query labels...`);
-          let enriched = 0;
-          let skipped = 0;
-
-          for (let i = 0; i < sessionIds.length; i++) {
-            const sid = sessionIds[i]!;
-            const session = db.prepare(`SELECT title, summary FROM memory_sessions WHERE id = ?`).get(sid) as { title: string; summary: string | null } | null;
-            if (!session?.title) { skipped++; continue; }
-
-            const input = session.title + (session.summary ? ". " + session.summary : "");
-            process.stdout.write(`  [${i + 1}/${sessionIds.length}] ${session.title.slice(0, 60)}...`);
-
-            try {
-              const store = getQmdStore();
-              const expanded = await store.internal.expandQuery(input);
-              const queryTexts = expanded.map(e => e.query).filter(Boolean);
-
-              if (dryRun) {
-                console.log(`\n    → ${queryTexts.join(" | ")}`);
-              } else {
-                const n = insertSessionQueries(db, sid, queryTexts);
-                process.stdout.write(` +${n}\n`);
-                enriched++;
-              }
-            } catch {
-              process.stdout.write(` (LLM unavailable, skipped)\n`);
-              skipped++;
-            }
-          }
-
-          if (!dryRun) {
-            console.log(`\nEnriched ${enriched} sessions${skipped > 0 ? `, skipped ${skipped}` : ""}.`);
-          }
-        }
-
-        if (clusters) {
-          const k = Number(getArg(args, "--k")) || undefined;
-          const model = getArg(args, "--model");
-          console.log("Clustering sessions...");
-          const clusterResult = await clusterSessions(db as any, {
-            projectId: projectFilter || undefined,
-            k,
-            model,
-          });
-          if (clusterResult.clusters.length === 0) {
-            console.log("Not enough sessions with embeddings to cluster. Run 'smriti embed' first.");
-          } else {
-            for (const c of clusterResult.clusters) {
-              const lastActive = c.lastActive ? new Date(c.lastActive).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
-              console.log(`  ${c.name.padEnd(40)} ${c.sessionIds.length} session${c.sessionIds.length === 1 ? "" : "s"}${lastActive ? `  (${lastActive})` : ""}`);
-            }
-            console.log(`\n${clusterResult.clusters.length} clusters across ${clusterResult.totalSessions} sessions.`);
-          }
-        }
-
+        // EnrichCommand.execute() prints its own progress inline (mirrors
+        // ingest/categorize) - nothing else to render here.
+        await unwrap(
+          await new EnrichCommand(createRealEnrichBackend(db)).run({ argv: args.slice(1), json: false })
+        );
         break;
       }
 
@@ -1431,12 +1057,10 @@ async function main() {
       // CLUSTERS
       // =====================================================================
       case "clusters": {
-        const k = Number(getArg(args, "--k")) || undefined;
-        const model = getArg(args, "--model");
-        const projectId = getArg(args, "--project");
-
         console.log("Clustering sessions...");
-        const clusterResult = await clusterSessions(db as any, { projectId, k, model });
+        const clusterResult = await unwrap(
+          await new ClustersCommand(createRealClustersBackend(db)).run({ argv: args.slice(1), json: hasFlag(args, "--json") })
+        );
 
         if (clusterResult.clusters.length === 0) {
           console.log("Not enough sessions with embeddings to cluster.");
@@ -1462,96 +1086,38 @@ async function main() {
       // DRIFT (temporal evolution)
       // =====================================================================
       case "drift": {
-        const driftTopic = args[1];
-        if (!driftTopic) {
-          console.error('Usage: smriti drift "<topic>" [options]');
-          process.exit(1);
-        }
-
+        const isJson = hasFlag(args, "--json");
         const driftProject = getArg(args, "--project");
-        const driftSince = getArg(args, "--since");
-        const driftLimit = Number(getArg(args, "--limit")) || 10;
-        const noSynthesizeDrift = hasFlag(args, "--no-synthesize");
 
-        // Recall all matching sessions (high limit, no session dedup — we want all mentions)
-        const driftResult = await recall(db, driftTopic, {
-          limit: driftLimit * 2,
-          synthesize: false,
-          project: driftProject || undefined,
-          fast: false,
-        });
+        const result = await unwrap(
+          await new DriftCommand(createRealDriftBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
 
-        if (driftResult.results.length < 2) {
+        if (result.insufficientHistory) {
           console.log("Not enough history to show evolution.");
-          if (driftResult.results.length === 1) {
-            console.log(formatSearchResults(driftResult.results));
+          if (result.rawResults && result.rawResults.length === 1) {
+            console.log(formatSearchResults(result.rawResults));
           }
           break;
         }
 
-        // Enrich with session dates from memory_sessions
-        const sessionIds = [...new Set(driftResult.results.map(r => r.session_id))];
-        const placeholders = sessionIds.map(() => "?").join(",");
-        const dateRows = db.prepare(
-          `SELECT id, created_at, updated_at FROM memory_sessions WHERE id IN (${placeholders})`
-        ).all(...sessionIds) as { id: string; created_at: string; updated_at: string }[];
-        const dateMap = new Map(dateRows.map(r => [r.id, r]));
-
-        // Filter by --since if given
-        let filteredResults = driftResult.results;
-        if (driftSince) {
-          const sinceDate = new Date(driftSince).getTime();
-          filteredResults = filteredResults.filter(r => {
-            const d = dateMap.get(r.session_id);
-            return d ? new Date(d.created_at).getTime() >= sinceDate : true;
-          });
-        }
-
-        // Deduplicate by session and sort chronologically
-        const seenSessions = new Set<string>();
-        const chronological = filteredResults
-          .filter(r => {
-            if (seenSessions.has(r.session_id)) return false;
-            seenSessions.add(r.session_id);
-            return true;
-          })
-          .sort((a, b) => {
-            const da = dateMap.get(a.session_id)?.created_at ?? "";
-            const db2 = dateMap.get(b.session_id)?.created_at ?? "";
-            return da.localeCompare(db2);
-          })
-          .slice(0, driftLimit);
-
-        if (hasFlag(args, "--json")) {
-          const timeline = chronological.map((r, i) => ({
-            n: i + 1,
-            session_id: r.session_id,
-            session_title: r.session_title,
-            date: dateMap.get(r.session_id)?.created_at,
-            content: r.content,
-          }));
-          console.log(json({ topic: driftTopic, timeline }));
+        if (isJson) {
+          console.log(json({ topic: result.topic, timeline: result.timeline }));
           break;
         }
 
-        console.log(`\n${driftTopic} — evolution across ${chronological.length} session${chronological.length === 1 ? "" : "s"}\n`);
-        const timelineText = chronological.map(r => {
-          const d = dateMap.get(r.session_id);
-          const date = d ? new Date(d.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?";
-          const proj = (r as any).project ? ` [${(r as any).project}]` : (driftProject ? ` [${driftProject}]` : "");
-          return `${date}${proj}  ${r.session_title || r.session_id}\n  ${r.content.slice(0, 200)}`;
+        console.log(`\n${result.topic} — evolution across ${result.timeline.length} session${result.timeline.length === 1 ? "" : "s"}\n`);
+        const timelineText = result.timeline.map(entry => {
+          const date = entry.date ? new Date(entry.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "?";
+          const proj = entry.project ? ` [${entry.project}]` : (driftProject ? ` [${driftProject}]` : "");
+          return `${date}${proj}  ${entry.session_title || entry.session_id}\n  ${entry.content.slice(0, 200)}`;
         }).join("\n\n");
 
         console.log(timelineText);
 
-        if (!noSynthesizeDrift) {
-          try {
-            const narrative = await ollamaDrift(driftTopic, timelineText);
-            console.log("\n--- Evolution narrative ---\n");
-            console.log(narrative);
-          } catch {
-            // Ollama unavailable — timeline shown above is the fallback
-          }
+        if (result.narrative !== undefined) {
+          console.log("\n--- Evolution narrative ---\n");
+          console.log(result.narrative);
         }
 
         break;
@@ -1561,23 +1127,11 @@ async function main() {
       // DIGEST
       // =====================================================================
       case "digest": {
-        const days = Number(getArg(args, "--days")) || 7;
-        const project = getArg(args, "--project");
-        const synthesize = hasFlag(args, "--synthesize");
-        const model = getArg(args, "--model");
-
-        const report = await generateDigest(db, {
-          days,
-          project,
-          synthesize,
-          model,
-        });
-
-        if (hasFlag(args, "--json")) {
-          console.log(json(report));
-        } else {
-          console.log(formatDigest(report));
-        }
+        const isJson = hasFlag(args, "--json");
+        const report = await unwrap(
+          await new DigestCommand(createRealDigestBackend(db)).run({ argv: args.slice(1), json: isJson })
+        );
+        console.log(isJson ? json(report) : formatDigest(report));
         break;
       }
 

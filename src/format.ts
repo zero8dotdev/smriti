@@ -43,7 +43,7 @@ export function table(
 export function formatSessionList(
   sessions: Array<{
     id: string;
-    title: string;
+    title: string | null;
     updated_at: string;
     agent_id?: string | null;
     project_id?: string | null;
