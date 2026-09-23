@@ -36,6 +36,13 @@ export const COPILOT_STORAGE_DIR = Bun.env.COPILOT_STORAGE_DIR || "";
 /** Cursor IDE user directory root — auto-detected per OS if not set */
 export const CURSOR_STORAGE_DIR = Bun.env.CURSOR_STORAGE_DIR || "";
 
+/** Grok Build home. Sessions live in `<home>/sessions`. */
+export const GROK_HOME = Bun.env.GROK_HOME || join(HOME, ".grok");
+
+/** Grok Build session root. Override with GROK_SESSIONS_DIR. */
+export const GROK_SESSIONS_DIR =
+  Bun.env.GROK_SESSIONS_DIR || join(GROK_HOME, "sessions");
+
 /** Daemon PID file path. Load-bearing for single-instance enforcement. */
 export const DAEMON_PID_FILE = join(HOME, ".cache", "smriti", "daemon.pid");
 

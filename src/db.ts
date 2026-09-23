@@ -541,6 +541,12 @@ const DEFAULT_AGENTS = [
     parser: "copilot",
   },
   {
+    id: "grok",
+    display_name: "Grok",
+    log_pattern: "~/.grok/sessions/*/*/updates.jsonl",
+    parser: "grok",
+  },
+  {
     id: "generic",
     display_name: "Generic Import",
     log_pattern: null,

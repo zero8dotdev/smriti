@@ -20,6 +20,7 @@ import {
   CODEX_LOGS_DIR,
   CLINE_LOGS_DIR,
   COPILOT_STORAGE_DIR,
+  GROK_SESSIONS_DIR,
 } from "../config";
 
 export type AgentRoot = {
@@ -39,6 +40,7 @@ export function getDefaultAgentRoots(): AgentRoot[] {
     { agent: "claude", root: CLAUDE_LOGS_DIR },
     { agent: "codex", root: CODEX_LOGS_DIR },
     { agent: "cline", root: CLINE_LOGS_DIR },
+    { agent: "grok", root: GROK_SESSIONS_DIR },
   ];
   if (COPILOT_STORAGE_DIR) {
     candidates.push({ agent: "copilot", root: COPILOT_STORAGE_DIR });

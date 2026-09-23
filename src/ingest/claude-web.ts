@@ -193,6 +193,13 @@ export async function ingestClaudeWeb(
       continue;
     }
 
+    if (options.dryRun) {
+      result.dryRun = true;
+      result.sessionsIngested++;
+      result.messagesIngested += conv.chat_messages.length;
+      continue;
+    }
+
     try {
       const sessionId = conv.uuid;
       const title = conv.name || "";
@@ -349,6 +356,18 @@ export async function ingestClaudeWebMemories(
   }
 
   result.sessionsFound = 1;
+
+  if (options.dryRun) {
+    result.dryRun = true;
+    let msgCount = 0;
+    if (mem.conversations_memory?.trim()) msgCount++;
+    for (const memory of Object.values(mem.project_memories || {})) {
+      if (memory?.trim()) msgCount++;
+    }
+    result.sessionsIngested = 1;
+    result.messagesIngested = msgCount;
+    return result;
+  }
 
   try {
     let msgCount = 0;

@@ -160,11 +160,14 @@ export function formatIngestResult(result: {
   messagesIngested: number;
   skipped: number;
   errors: string[];
+  dryRun?: boolean;
 }): string {
   const lines = [
     `Agent: ${result.agent}`,
     `Sessions found: ${result.sessionsFound}`,
-    `Sessions ingested: ${result.sessionsIngested}`,
+    result.dryRun
+      ? `Would ingest ${result.sessionsIngested} sessions (${result.messagesIngested} messages)`
+      : `Sessions ingested: ${result.sessionsIngested}`,
     `Messages ingested: ${result.messagesIngested}`,
     `Skipped: ${result.skipped}`,
   ];

@@ -25,6 +25,8 @@ export type IngestResult = {
   messagesIngested: number;
   skipped: number;
   errors: string[];
+  /** Set when the run parsed sessions but wrote nothing. */
+  dryRun?: boolean;
 };
 
 export type IngestOptions = {
@@ -33,6 +35,7 @@ export type IngestOptions = {
   onProgress?: (msg: string) => void;
   logsDir?: string;
   whole?: boolean;
+  dryRun?: boolean;
 };
 
 function isStructuredMessage(msg: ParsedMessage | StructuredMessage): msg is StructuredMessage {
@@ -55,6 +58,7 @@ async function ingestParsedSessions(
     explicitProjectPath?: string;
     incremental?: boolean;
     force?: boolean;
+    dryRun?: boolean;
   } = {
     existingSessionIds: new Set(),
   }
@@ -66,6 +70,7 @@ async function ingestParsedSessions(
     messagesIngested: 0,
     skipped: 0,
     errors: [],
+    dryRun: options.dryRun || undefined,
   };
   const useSessionTxn = process.env.SMRITI_INGEST_SESSION_TXN !== "0";
 
@@ -97,6 +102,17 @@ async function ingestParsedSessions(
 
       if (messagesToIngest.length === 0) {
         result.skipped++;
+        continue;
+      }
+
+      if (options.dryRun) {
+        result.sessionsIngested++;
+        result.messagesIngested += messagesToIngest.length;
+        if (options.onProgress) {
+          options.onProgress(
+            `Would ingest ${session.sessionId} (${messagesToIngest.length} messages)`
+          );
+        }
         continue;
       }
 
@@ -225,6 +241,7 @@ export async function ingest(
     projectId?: string;
     force?: boolean;
     whole?: boolean;
+    dryRun?: boolean;
   } = {}
 ): Promise<IngestResult> {
   const existingSessionIds = getExistingSessionIds(db);
@@ -233,6 +250,7 @@ export async function ingest(
     existingSessionIds,
     onProgress: options.onProgress,
     logsDir: options.logsDir,
+    dryRun: options.dryRun,
   };
 
   switch (agent) {
@@ -252,6 +270,7 @@ export async function ingest(
         explicitProjectId: options.projectId,
         incremental: !options.force,
         force: options.force,
+        dryRun: options.dryRun,
       });
     }
     case "codex": {
@@ -267,6 +286,7 @@ export async function ingest(
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
         force: options.force,
+        dryRun: options.dryRun,
       });
     }
     case "cursor": {
@@ -357,6 +377,7 @@ export async function ingest(
             onProgress: options.onProgress,
             explicitProjectId: options.projectId,
             force: options.force,
+        dryRun: options.dryRun,
           }
         );
       }
@@ -381,6 +402,7 @@ export async function ingest(
             onProgress: options.onProgress,
             explicitProjectId: options.projectId,
             force: options.force,
+            dryRun: options.dryRun,
           }
         );
       }
@@ -393,6 +415,7 @@ export async function ingest(
         messagesIngested: sqliteResult.messagesIngested + legacyResult.messagesIngested,
         skipped: sqliteResult.skipped + legacyResult.skipped,
         errors: [...sqliteResult.errors, ...legacyResult.errors],
+        dryRun: options.dryRun || undefined,
       };
     }
     case "cline": {
@@ -409,6 +432,25 @@ export async function ingest(
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
         force: options.force,
+        dryRun: options.dryRun,
+      });
+    }
+    case "grok": {
+      const { discoverGrokSessions } = await import("./grok");
+      const { parseGrok } = await import("./parsers");
+      const discovered = await discoverGrokSessions(options.logsDir);
+      const sessions = discovered.map((s) => ({
+        sessionId: s.sessionId,
+        filePath: s.filePath,
+        projectDir: s.projectDir,
+      }));
+      return ingestParsedSessions(db, "grok", sessions, parseGrok, {
+        existingSessionIds,
+        onProgress: options.onProgress,
+        explicitProjectId: options.projectId,
+        incremental: !options.force,
+        force: options.force,
+        dryRun: options.dryRun,
       });
     }
     case "copilot": {
@@ -428,6 +470,7 @@ export async function ingest(
         onProgress: options.onProgress,
         explicitProjectId: options.projectId,
         force: options.force,
+        dryRun: options.dryRun,
       });
     }
     case "claude-web": {
@@ -496,6 +539,7 @@ export async function ingest(
           explicitProjectId: options.projectId,
           explicitProjectPath: options.projectPath,
           force: options.force,
+          dryRun: options.dryRun,
         }
       );
       return result;
@@ -507,7 +551,7 @@ export async function ingest(
         sessionsIngested: 0,
         messagesIngested: 0,
         skipped: 0,
-        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, cline, copilot, claude-web, or file`],
+        errors: [`Unknown agent: ${agent}. Use: claude, codex, cursor, cline, copilot, grok, claude-web, or file`],
       };
   }
 }
@@ -517,11 +561,11 @@ export async function ingest(
  */
 export async function ingestAll(
   db: Database,
-  options: { onProgress?: (msg: string) => void } = {}
+  options: { onProgress?: (msg: string) => void; dryRun?: boolean } = {}
 ): Promise<IngestResult[]> {
   const results: IngestResult[] = [];
 
-  for (const agent of ["claude-code", "codex", "cline", "copilot"]) {
+  for (const agent of ["claude-code", "codex", "cline", "copilot", "grok"]) {
     const result = await ingest(db, agent, options);
     results.push(result);
   }

@@ -192,6 +192,7 @@ smriti ingest claude          # Claude Code sessions
 smriti ingest codex           # Codex CLI sessions
 smriti ingest cline           # Cline CLI sessions
 smriti ingest copilot         # GitHub Copilot (VS Code) sessions
+smriti ingest grok            # Grok sessions
 smriti ingest cursor --project-path ./myapp
 smriti ingest file transcript.txt --title "Planning Session"
 smriti ingest all             # All known agents at once

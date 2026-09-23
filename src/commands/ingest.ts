@@ -25,6 +25,7 @@ export type IngestResult = {
   messagesIngested: number;
   skipped: number;
   errors: string[];
+  dryRun?: boolean;
 };
 
 export type IngestCommandResult = IngestResult | IngestResult[];
@@ -44,12 +45,14 @@ export interface IngestBackend {
       projectId?: string;
       force?: boolean;
       whole?: boolean;
+      dryRun?: boolean;
     }
   ): Promise<IngestResult>;
 
   /** Ingest from all known agents. */
   ingestAll(options: {
     onProgress?: (msg: string) => void;
+    dryRun?: boolean;
   }): Promise<IngestResult[]>;
 }
 
@@ -118,7 +121,7 @@ export class IngestCommand extends BaseCommand<IngestCommandResult> {
       // aliases (claude-code, claude-web-memory, generic, ...) and falls
       // back to a graceful "Unknown agent" IngestResult (not a hard error)
       // for anything else - matching that permissive behavior exactly.
-      description: "agent to ingest from (claude, claude-code, claude-web, claude-web-memory, codex, cursor, cline, copilot, file, generic, all)",
+      description: "agent to ingest from (claude, claude-code, claude-web, claude-web-memory, codex, cursor, cline, copilot, grok, file, generic, all)",
     },
     {
       name: "file-path",
@@ -136,30 +139,39 @@ export class IngestCommand extends BaseCommand<IngestCommandResult> {
     { flag: "--project", type: "string", description: "explicit project ID" },
     { flag: "--force", type: "boolean", description: "re-ingest sessions (delete sidecar data, re-extract)" },
     { flag: "--whole", type: "boolean", description: "store file as single document (for .md files)" },
+    { flag: "--dry-run", type: "boolean", description: "parse sessions and report counts, but do not write" },
   ];
   output = {
     description: "prints ingest statistics (sessions found, ingested, messages, errors)",
     jsonShape: "{ agent: string, sessionsFound: number, sessionsIngested: number, messagesIngested: number, skipped: number, errors: string[] } | array of such objects for agent=all",
   };
   examples: [Example, Example, Example] = [
+    { command: "smriti ingest grok", description: "ingest Grok sessions" },
     { command: "smriti ingest claude", description: "ingest from Claude Code" },
-    { command: "smriti ingest file ./chat.md --whole", description: "ingest a markdown file as single document" },
     { command: "smriti ingest all", description: "ingest from all known agents" },
   ];
   detailedSummary =
-    "Ingest conversations and messages from AI agents and tools. Agents: claude (Claude Code sessions), claude-web (claude.ai export JSON), " +
+    "Ingest conversations and messages from AI agents and tools. Agents: grok (Grok sessions), claude (Claude Code sessions), claude-web (claude.ai export JSON), " +
     "codex (Codex CLI), cursor (Cursor editor), cline (Cline agent), copilot (VS Code Copilot), file (external chat/jsonl files), all (all agents). " +
     "The file agent requires --file flag or positional file-path; use --format to specify chat or jsonl; use --whole to store markdown as single document instead of splitting paragraphs. " +
-    "--force re-ingests all sessions (deletes sidecar data first). Returns counts of sessions found, ingested, messages ingested, and any errors.";
+    "--force re-ingests all sessions (deletes sidecar data first). --dry-run parses and reports counts without writing. Returns counts of sessions found, ingested, messages ingested, and any errors.";
 
   protected async execute(parsed: ParsedArgs, ctx: CommandContext): Promise<IngestCommandResult> {
     const agent = parsed.positionals[0];
 
     // Handle "all" agent
+    const dryRun = parsed.flags["--dry-run"] === true;
+
     if (agent === "all") {
-      return await this.backend.ingestAll({
+      const results = await this.backend.ingestAll({
         onProgress: (msg) => console.log(`  ${msg}`),
+        dryRun,
       });
+      if (dryRun) {
+        for (const result of results) result.dryRun = true;
+        console.error("No changes were made (--dry-run)");
+      }
+      return results;
     }
 
     // Extract file path: positional[1] or --file flag
@@ -185,8 +197,13 @@ export class IngestCommand extends BaseCommand<IngestCommandResult> {
       projectId: parsed.flags["--project"] as string | undefined,
       force: parsed.flags["--force"] === true,
       whole,
+      dryRun,
     });
 
+    if (dryRun) {
+      result.dryRun = true;
+      console.error("No changes were made (--dry-run)");
+    }
     return result;
   }
 }

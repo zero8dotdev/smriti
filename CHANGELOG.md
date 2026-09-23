@@ -1,3 +1,16 @@
+## [0.10.0] - 2026-09-23
+
+### 🎯 Release Overview
+Grok sessions now ingest into the same memory as the other coding agents.
+
+### ✨ Added
+
+#### Grok ingest
+- `smriti ingest grok` reads `~/.grok/sessions` (`updates.jsonl`) and stores the conversation: user prompts, assistant text, tool calls, and tool results.
+- `smriti ingest all` includes Grok. The daemon watches the Grok session directory.
+- Subagent sessions are skipped. A session already stored is updated with new messages only.
+- `--dry-run` reports what would be ingested and writes nothing.
+
 ## [0.9.3] - 2026-09-23
 
 ### 🎯 Release Overview

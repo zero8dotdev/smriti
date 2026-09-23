@@ -3,6 +3,7 @@ import { basename } from "path";
 import { deriveProjectId as deriveClaudeProjectId, deriveProjectPath as deriveClaudeProjectPath } from "./claude";
 import { deriveProjectId as deriveClineProjectId, deriveProjectPath as deriveClineProjectPath } from "./cline";
 import { deriveProjectId as deriveCopilotProjectId } from "./copilot";
+import { deriveProjectId as deriveGrokProjectId } from "./grok";
 
 export type ResolveSessionInput = {
   db: Database;
@@ -44,6 +45,11 @@ function deriveForAgent(agentId: string, projectDir?: string): { projectId: stri
     case "cursor":
       return {
         projectId: basename(projectDir) || "unknown",
+        projectPath: projectDir,
+      };
+    case "grok":
+      return {
+        projectId: deriveGrokProjectId(projectDir),
         projectPath: projectDir,
       };
     case "codex":
